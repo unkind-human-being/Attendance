@@ -3,8 +3,8 @@ import { getAnalytics, isSupported } from "firebase/analytics";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
-// Your actual Firebase configuration
-const firebaseConfig = {
+// Added "export" here so we can use it in AdminHome.jsx
+export const firebaseConfig = {
   apiKey: "AIzaSyCl7QIk-ag61ffM1yJKYLU4qaARZvNCEgY",
   authDomain: "smartpta-attendance.firebaseapp.com",
   projectId: "smartpta-attendance",
@@ -21,7 +21,7 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
-// Safely initialize Analytics (only in supported browser environments)
+// Safely initialize Analytics
 export let analytics;
 isSupported().then((supported) => {
   if (supported) {

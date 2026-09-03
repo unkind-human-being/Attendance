@@ -1,6 +1,8 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import Login from "./pages/auth/Login";
-import Register from "./pages/auth/Register";
+
+// Admin Pages
+import AdminHome from "./pages/admin/AdminHome";
 
 // Teacher Pages
 import TeacherHome from "./pages/teacher/TeacherHome";
@@ -16,11 +18,13 @@ function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/login" />} />
         <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
         
-        {/* Teacher Routes */}
+        {/* Admin Route */}
+        <Route path="/admin/home" element={<AdminHome />} />
+
+        {/* Teacher Route */}
         <Route path="/teacher/home" element={<TeacherHome />} />
-        
+
         {/* Parent Routes */}
         <Route path="/parent/home" element={<ParentHome />} />
         <Route path="/parent/attendance" element={<ParentAttendance />} />
