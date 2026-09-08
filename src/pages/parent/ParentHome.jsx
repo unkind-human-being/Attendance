@@ -1,121 +1,129 @@
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import SidebarLayout from "../../components/SidebarLayout";
-import { getStudentsBySection } from "../../firebase/attendanceService";
-import { db } from "../../firebase/firebase";
-import { collection, getDocs } from "firebase/firestore";
+import { db, auth } from "../../firebase/firebase";
+import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { onAuthStateChanged } from "firebase/auth";
 
 export default function ParentHome() {
-  const [availableRooms, setAvailableRooms] = useState([]);
-  const [joinedChild, setJoinedChild] = useState(null);
-  const [searchName, setSearchName] = useState("");
-  const [selectedRoomToJoin, setSelectedRoomToJoin] = useState(null);
-
-  // Modern UI Feedback Banner
-  const [feedback, setFeedback] = useState({ text: "", type: "" });
-
-  const showMessage = (text, type = "success") => {
-    setFeedback({ text, type });
-    setTimeout(() => setFeedback({ text: "", type: "" }), 3000);
-  };
+  const [parentProfile, setParentProfile] = useState(null);
+  const [studentData, setStudentData] = useState(null);
+  const [latestNotification, setLatestNotification] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const savedChild = localStorage.getItem("joinedChild");
-    if (savedChild) setJoinedChild(JSON.parse(savedChild));
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          // 1. Get the Parent's assigned LRN and Room from their account
+          const parentDoc = await getDoc(doc(db, "users", user.uid));
+          if (parentDoc.exists()) {
+            const pData = parentDoc.data();
+            setParentProfile(pData);
+            
+            // Save LRN to local storage so the layout/notification badge can use it
+            localStorage.setItem("parentLRN", pData.studentLRN);
 
-    const fetchRooms = async () => {
-      const querySnapshot = await getDocs(collection(db, "rooms"));
-      const loadedRooms = [];
-      querySnapshot.forEach((doc) => loadedRooms.push({ id: doc.id, ...doc.data() }));
-      loadedRooms.sort((a, b) => a.grade - b.grade);
-      setAvailableRooms(loadedRooms);
-    };
-    fetchRooms();
+            // 2. Fetch the Student's actual data from the roster using the LRN
+            const qStudent = query(collection(db, "students"), where("lrn", "==", pData.studentLRN));
+            const studentSnap = await getDocs(qStudent);
+            
+            if (!studentSnap.empty) {
+              setStudentData(studentSnap.docs[0].data());
+            }
+
+            // 3. Fetch the latest attendance notification for this LRN
+            const qAtt = query(collection(db, "attendance"), where("studentLRN", "==", pData.studentLRN));
+            const attSnap = await getDocs(qAtt);
+            const records = [];
+            attSnap.forEach(d => records.push(d.data()));
+            
+            // Sort to get the most recent one
+            records.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+            if (records.length > 0) {
+              setLatestNotification(records[0]);
+            }
+          }
+        } catch (error) {
+          console.error("Error fetching parent data:", error);
+        }
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
-  const attemptJoin = async (e) => {
-    e.preventDefault();
-    const response = await getStudentsBySection(selectedRoomToJoin.name);
-    
-    if (response.success) {
-      const foundChild = response.students.find(s => s.fullName.toLowerCase() === searchName.toLowerCase().trim());
-      
-      if (foundChild) {
-        setJoinedChild(foundChild);
-        localStorage.setItem("joinedChild", JSON.stringify(foundChild));
-        setSelectedRoomToJoin(null);
-        showMessage("Child verified! You are now connected.");
-      } else {
-        showMessage("Child not found in this room. Please check the spelling.", "error");
-      }
-    } else {
-      showMessage("Error connecting to room.", "error");
-    }
-  };
-
-  const handleDisconnect = () => {
-    localStorage.removeItem("joinedChild");
-    setJoinedChild(null);
-    showMessage("Disconnected from room.", "success");
-  };
+  if (loading) {
+    return (
+      <SidebarLayout role="parent">
+        <div style={{ textAlign: "center", padding: "3rem", color: "#6b7280" }}>Loading student data...</div>
+      </SidebarLayout>
+    );
+  }
 
   return (
     <SidebarLayout role="parent">
       
-      {/* Feedback Banner */}
-      {feedback.text && (
-        <div style={{
-          padding: '12px 16px', marginBottom: '1rem', borderRadius: '8px', fontWeight: '500',
-          backgroundColor: feedback.type === 'error' ? '#fee2e2' : '#d1fae5',
-          color: feedback.type === 'error' ? '#991b1b' : '#065f46',
-          border: `1px solid ${feedback.type === 'error' ? '#f87171' : '#34d399'}`
-        }}>
-          {feedback.text}
-        </div>
-      )}
-
-      {!joinedChild ? (
-        <div className="card">
-          <h3>Available Rooms</h3>
-          <p style={{ color: "#6b7280", marginBottom: "1rem" }}>Select your child's room to connect.</p>
-          
-          {availableRooms.length === 0 ? <p>No rooms have been created by teachers yet.</p> : (
-            <div className="flex-row">
-              {availableRooms.map((room) => (
-                <button key={room.id} className="btn-secondary" onClick={() => setSelectedRoomToJoin(room)}>
-                  Grade {room.grade} - {room.name}
-                </button>
-              ))}
+      {/* 1. STUDENT IDENTITY CARD */}
+      <div className="card" style={{ background: "linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%)", color: "white", border: "none" }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+          <div style={{ height: '60px', width: '60px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.75rem', fontWeight: 'bold' }}>
+            {studentData ? studentData.firstName.charAt(0) : "🎓"}
+          </div>
+          <div>
+            <h2 style={{ margin: '0 0 5px 0', fontSize: '1.5rem', fontWeight: '700' }}>
+              {studentData ? `${studentData.firstName} ${studentData.lastName}` : "Student Profile"}
+            </h2>
+            <div style={{ fontSize: '0.9rem', opacity: 0.9, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <span><strong>LRN:</strong> {parentProfile?.studentLRN || "Not Assigned"}</span>
+              <span><strong>Room:</strong> {parentProfile?.assignedRoom || "Not Assigned"}</span>
             </div>
-          )}
+          </div>
+        </div>
+      </div>
 
-          {selectedRoomToJoin && (
-            <div style={{ marginTop: "2rem", padding: "1rem", border: "1px solid #d1d5db", borderRadius: "8px" }}>
-              <h4>Join {selectedRoomToJoin.name}</h4>
-              <form onSubmit={attemptJoin} style={{ display: "flex", gap: "10px", marginTop: "10px", flexWrap: "wrap" }}>
-                <input 
-                  className="auth-input" 
-                  style={{ flex: 1, minWidth: "200px" }}
-                  placeholder="Enter Child's Full Name" 
-                  value={searchName} 
-                  onChange={(e) => setSearchName(e.target.value)} 
-                  required 
-                />
-                <button type="submit" className="btn-primary">Verify & Join</button>
-              </form>
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="card">
-          <h3>Successfully Connected</h3>
-          <p style={{ fontSize: "1.2rem", fontWeight: "bold", margin: "10px 0" }}>{joinedChild.fullName}</p>
-          <p>Grade {joinedChild.gradeLevel} - {joinedChild.section}</p>
-          
-          <button className="btn-secondary" style={{ marginTop: "1rem" }} onClick={handleDisconnect}>
-            Disconnect / Switch Room
-          </button>
-        </div>
-      )}
+      {/* 2. LATEST NOTIFICATION FROM TEACHER */}
+      <div className="card" style={{ borderLeft: "4px solid #10b981", padding: "1.25rem" }}>
+        <h3 style={{ fontSize: '1rem', color: '#374151', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          🔔 Latest Update
+        </h3>
+        
+        {latestNotification ? (
+          <div>
+            <p style={{ margin: 0, fontSize: '1.1rem', fontWeight: '600', color: '#111827' }}>
+              Attendance: <span style={{ color: latestNotification.status === 'Present' ? '#10b981' : '#ef4444' }}>{latestNotification.status}</span>
+            </p>
+            <p style={{ margin: '5px 0 0 0', fontSize: '0.875rem', color: '#6b7280' }}>
+              Recorded on {latestNotification.date} 
+            </p>
+          </div>
+        ) : (
+          <p style={{ margin: 0, color: '#6b7280', fontSize: '0.9rem' }}>No recent notifications from the teacher.</p>
+        )}
+      </div>
+
+      {/* 3. QUICK ACTION BUTTONS */}
+      <h3 style={{ margin: "1.5rem 0 1rem 0", fontSize: "1.1rem", color: "#374151" }}>Check Status</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+        
+        <Link to="/parent/attendance" style={{ textDecoration: 'none' }}>
+          <div className="card" style={{ margin: 0, textAlign: 'center', padding: '1.5rem', transition: 'transform 0.2s', cursor: 'pointer' }} onMouseOver={e => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}>
+            <div style={{ fontSize: '2rem', marginBottom: '10px' }}>📅</div>
+            <h4 style={{ color: '#111827', margin: 0 }}>Attendance Log</h4>
+            <p style={{ color: '#6b7280', fontSize: '0.75rem', margin: '5px 0 0 0' }}>View history</p>
+          </div>
+        </Link>
+
+        <Link to="/parent/grades" style={{ textDecoration: 'none' }}>
+          <div className="card" style={{ margin: 0, textAlign: 'center', padding: '1.5rem', transition: 'transform 0.2s', cursor: 'pointer' }} onMouseOver={e => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}>
+            <div style={{ fontSize: '2rem', marginBottom: '10px' }}>📊</div>
+            <h4 style={{ color: '#111827', margin: 0 }}>Academic Grades</h4>
+            <p style={{ color: '#6b7280', fontSize: '0.75rem', margin: '5px 0 0 0' }}>Check progress</p>
+          </div>
+        </Link>
+
+      </div>
     </SidebarLayout>
   );
 }
