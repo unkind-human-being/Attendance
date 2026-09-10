@@ -1,16 +1,19 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import SidebarLayout from "../../components/SidebarLayout";
 import { db, auth } from "../../firebase/firebase";
 import { collection, query, where, getDocs, addDoc, serverTimestamp } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
+import { triggerAttendanceNotification } from "../../services/pushService";
 
 export default function TeacherHome() {
-  const [currentView, setCurrentView] = useState("rooms"); // 'rooms', 'roster', 'attendance', 'grades'
+  const [currentView, setCurrentView] = useState("rooms"); // 'rooms' | 'roster' | 'attendance' | 'grades'
   const [feedback, setFeedback] = useState({ text: "", type: "", show: false });
+  const toastTimerRef = useRef(null);
 
   const [myRooms, setMyRooms] = useState([]);
   const [activeRoom, setActiveRoom] = useState(null);
   const [students, setStudents] = useState([]);
+  const [loading, setLoading] = useState(false);
 
   // Grades State
   const [selectedStudent, setSelectedStudent] = useState(null);
@@ -19,12 +22,16 @@ export default function TeacherHome() {
   const [quarter, setQuarter] = useState("Q1");
   const [score, setScore] = useState("");
 
+  // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
   const showMessage = (text, type = "success") => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setFeedback({ text, type, show: true });
-    setTimeout(() => setFeedback({ text: "", type: "", show: false }), 3000);
+    toastTimerRef.current = setTimeout(() => {
+      setFeedback({ text: "", type: "", show: false });
+    }, 3000);
   };
 
   useEffect(() => {
@@ -33,10 +40,14 @@ export default function TeacherHome() {
         fetchMyRooms(user.uid);
       }
     });
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
   }, []);
 
   const fetchMyRooms = async (teacherUid) => {
+    setLoading(true);
     try {
       const q = query(collection(db, "rooms"), where("assignedTeacherId", "==", teacherUid));
       const querySnapshot = await getDocs(q);
@@ -45,6 +56,8 @@ export default function TeacherHome() {
       setMyRooms(roomsLoaded);
     } catch (error) {
       showMessage("Failed to load assigned rooms.", "error");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -58,35 +71,44 @@ export default function TeacherHome() {
   };
 
   const fetchStudents = async (fullRoomName) => {
+    setLoading(true);
     try {
       const q = query(collection(db, "students"), where("room", "==", fullRoomName));
       const querySnapshot = await getDocs(q);
       const loadedStudents = [];
       querySnapshot.forEach((doc) => loadedStudents.push({ id: doc.id, ...doc.data() }));
       
-      loadedStudents.sort((a, b) => a.lastName.localeCompare(b.lastName));
+      loadedStudents.sort((a, b) => (a.lastName || "").localeCompare(b.lastName || ""));
       setStudents(loadedStudents);
     } catch (error) {
       showMessage("Failed to load students.", "error");
+    } finally {
+      setLoading(false);
     }
   };
 
   const markAttendance = async (student, status) => {
+    if (!activeRoom) return;
     try {
       const fullRoomName = `Grade ${activeRoom.grade} - ${activeRoom.name}`;
+      const studentName = student.fullName || `${student.firstName} ${student.lastName}`;
 
       await addDoc(collection(db, "attendance"), {
         studentId: student.id,
-        studentLRN: student.lrn, // Links to Parent Account
-        studentName: student.fullName,
+        studentLRN: student.lrn,
+        studentName: studentName,
         room: fullRoomName, 
         status: status,
         timestamp: serverTimestamp(),
         date: new Date().toLocaleDateString()
       });
+
+      // Trigger local sound & push notification
+      triggerAttendanceNotification(studentName, status);
+
       showMessage(`${student.firstName} marked as ${status}.`);
     } catch (error) {
-      showMessage(`Failed to mark attendance.`, "error");
+      showMessage("Failed to mark attendance.", "error");
     }
   };
 
@@ -98,6 +120,7 @@ export default function TeacherHome() {
   };
 
   const fetchStudentGrades = async (lrn) => {
+    setLoading(true);
     try {
       const q = query(collection(db, "grades"), where("studentLRN", "==", lrn));
       const querySnapshot = await getDocs(q);
@@ -106,16 +129,20 @@ export default function TeacherHome() {
       setStudentGrades(loadedGrades);
     } catch (error) {
       showMessage("Failed to load grades.", "error");
+    } finally {
+      setLoading(false);
     }
   };
 
   const submitGrade = async (e) => {
     e.preventDefault();
+    if (!selectedStudent || !auth.currentUser) return;
+
     try {
       await addDoc(collection(db, "grades"), {
         studentId: selectedStudent.id,
-        studentLRN: selectedStudent.lrn, // Crucial: Links to Parent Account!
-        studentName: selectedStudent.fullName,
+        studentLRN: selectedStudent.lrn,
+        studentName: selectedStudent.fullName || `${selectedStudent.firstName} ${selectedStudent.lastName}`,
         subject: subject,
         quarter: quarter,
         score: Number(score),
@@ -124,13 +151,13 @@ export default function TeacherHome() {
       });
       showMessage(`Grade saved for ${selectedStudent.firstName}!`);
       setScore("");
-      fetchStudentGrades(selectedStudent.lrn); // Refresh the grade list instantly
+      fetchStudentGrades(selectedStudent.lrn);
     } catch (error) {
       showMessage("Failed to save grade.", "error");
     }
   };
 
-  // --- Load Management (Pagination) ---
+  // --- Pagination Logic ---
   const totalItems = students.length;
   const totalPages = Math.ceil(totalItems / itemsPerPage) || 1;
   const indexOfLastItem = currentPage * itemsPerPage;
@@ -144,19 +171,19 @@ export default function TeacherHome() {
         .toast-popup.show { transform: translateX(-50%) translateY(0); opacity: 1; }
         .toast-success { border-left: 6px solid #10b981; color: #065f46; }
         .toast-error { border-left: 6px solid #ef4444; color: #991b1b; }
-        
         .student-link { color: #1877f2; font-weight: 600; cursor: pointer; text-decoration: none; padding: 5px 0; display: inline-block; transition: color 0.2s; }
         .student-link:hover { color: #1e3a8a; text-decoration: underline; }
+        .spinner { margin: 2rem auto; text-align: center; color: #6b7280; }
       `}</style>
 
       <div className={`toast-popup ${feedback.show ? 'show' : ''} ${feedback.type === 'error' ? 'toast-error' : 'toast-success'}`}>
         {feedback.text}
       </div>
 
-      {/* =========================================
-          VIEW 1: ROOMS
-      ========================================= */}
-      {currentView === "rooms" && (
+      {loading && <div className="spinner">Loading...</div>}
+
+      {/* VIEW 1: ROOMS */}
+      {!loading && currentView === "rooms" && (
         <div className="card">
           <h3>My Assigned Classrooms</h3>
           <p className="subtext">Select a room to view your students and manage records.</p>
@@ -182,10 +209,8 @@ export default function TeacherHome() {
         </div>
       )}
 
-      {/* =========================================
-          VIEW 2: ROSTER
-      ========================================= */}
-      {currentView === "roster" && (
+      {/* VIEW 2: ROSTER */}
+      {!loading && currentView === "roster" && activeRoom && (
         <div className="card">
           <div className="breadcrumb">
             <span onClick={() => setCurrentView("rooms")} style={{ cursor: 'pointer', color: '#1877f2' }}>My Rooms</span> 
@@ -216,7 +241,6 @@ export default function TeacherHome() {
                   currentStudents.map(student => (
                     <tr key={student.id}>
                       <td>
-                        {/* Clickable student name to open Grades view */}
                         <div className="student-link" onClick={() => openGradesView(student)}>
                           {student.lastName}, {student.firstName}
                         </div>
@@ -229,7 +253,6 @@ export default function TeacherHome() {
             </table>
           </div>
 
-          {/* Load Management Updated to 10/100 Format */}
           {totalItems > 0 && (
             <div className="pagination-controls" style={{ marginTop: '1.5rem' }}>
               <button className="btn-outline" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>
@@ -248,14 +271,12 @@ export default function TeacherHome() {
         </div>
       )}
 
-      {/* =========================================
-          VIEW 3: ATTENDANCE
-      ========================================= */}
-      {currentView === "attendance" && (
+      {/* VIEW 3: ATTENDANCE */}
+      {!loading && currentView === "attendance" && activeRoom && (
         <div className="card">
           <div className="breadcrumb">
             <span onClick={() => setCurrentView("rooms")} style={{ cursor: 'pointer', color: '#1877f2' }}>My Rooms</span> / 
-            <span onClick={() => setCurrentView("roster")} style={{ cursor: 'pointer', color: '#1877f2' }}> {activeRoom.name}</span> / 
+            <span onClick={() => setCurrentView("roster")} style={{ cursor: 'pointer', color: '#1877f2' }}> Grade {activeRoom.grade} - {activeRoom.name}</span> / 
             <span> Attendance</span>
           </div>
           
@@ -310,10 +331,8 @@ export default function TeacherHome() {
         </div>
       )}
 
-      {/* =========================================
-          VIEW 4: GRADES
-      ========================================= */}
-      {currentView === "grades" && selectedStudent && (
+      {/* VIEW 4: GRADES */}
+      {!loading && currentView === "grades" && selectedStudent && (
         <div className="card">
           <div className="breadcrumb">
             <span onClick={() => setCurrentView("roster")} style={{ cursor: 'pointer', color: '#1877f2' }}>← Back to Roster</span>

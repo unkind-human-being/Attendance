@@ -2,8 +2,9 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import SidebarLayout from "../../components/SidebarLayout";
 import { db, auth } from "../../firebase/firebase";
-import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { doc, getDoc, collection, query, where, getDocs, onSnapshot } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
+import { triggerAttendanceNotification } from "../../services/pushService";
 
 export default function ParentHome() {
   const [parentProfile, setParentProfile] = useState(null);
@@ -12,7 +13,9 @@ export default function ParentHome() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let unsubscribeAttendance = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       if (user) {
         try {
           // 1. Get the Parent's assigned LRN and Room from their account
@@ -32,17 +35,28 @@ export default function ParentHome() {
               setStudentData(studentSnap.docs[0].data());
             }
 
-            // 3. Fetch the latest attendance notification for this LRN
+            // 3. Listen to real-time attendance updates for this LRN
             const qAtt = query(collection(db, "attendance"), where("studentLRN", "==", pData.studentLRN));
-            const attSnap = await getDocs(qAtt);
-            const records = [];
-            attSnap.forEach(d => records.push(d.data()));
             
-            // Sort to get the most recent one
-            records.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
-            if (records.length > 0) {
-              setLatestNotification(records[0]);
-            }
+            let initialLoad = true;
+            unsubscribeAttendance = onSnapshot(qAtt, (attSnap) => {
+              const records = [];
+              attSnap.forEach(d => records.push(d.data()));
+              
+              // Sort to get the most recent record
+              records.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+
+              if (records.length > 0) {
+                const latest = records[0];
+                setLatestNotification(latest);
+
+                // Trigger desktop notification and alert audio on new update after initial load
+                if (!initialLoad) {
+                  triggerAttendanceNotification(latest.studentName, latest.status);
+                }
+              }
+              initialLoad = false;
+            });
           }
         } catch (error) {
           console.error("Error fetching parent data:", error);
@@ -51,7 +65,10 @@ export default function ParentHome() {
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeAttendance) unsubscribeAttendance();
+    };
   }, []);
 
   if (loading) {
