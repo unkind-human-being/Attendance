@@ -15,7 +15,6 @@ export default function AdminHome() {
   
   const [feedback, setFeedback] = useState({ text: "", type: "", show: false });
   
-  // ADDED: studentFirstName and studentLastName
   const [formData, setFormData] = useState({
     firstName: "",
     middleInitial: "",
@@ -33,6 +32,10 @@ export default function AdminHome() {
     section: "",
     assignedTeacherId: ""
   });
+
+  // --- NEW: Edit Room State ---
+  const [editingRoomId, setEditingRoomId] = useState(null);
+  const [editTeacherId, setEditTeacherId] = useState("");
 
   const [roleFilter, setRoleFilter] = useState("teacher");
   const [gradeFilter, setGradeFilter] = useState("");
@@ -53,14 +56,14 @@ export default function AdminHome() {
   const fetchUsers = async () => {
     const querySnapshot = await getDocs(collection(db, "users"));
     const loadedUsers = [];
-    querySnapshot.forEach((doc) => loadedUsers.push({ id: doc.id, ...doc.data() }));
+    querySnapshot.forEach((document) => loadedUsers.push({ id: document.id, ...document.data() }));
     setUsers(loadedUsers);
   };
 
   const fetchRooms = async () => {
     const querySnapshot = await getDocs(collection(db, "rooms"));
     const loadedRooms = [];
-    querySnapshot.forEach((doc) => loadedRooms.push({ id: doc.id, ...doc.data() }));
+    querySnapshot.forEach((document) => loadedRooms.push({ id: document.id, ...document.data() }));
     loadedRooms.sort((a, b) => a.grade - b.grade);
     setRooms(loadedRooms);
   };
@@ -96,10 +99,8 @@ export default function AdminHome() {
         ...(role === "parent" && { studentLRN: formData.studentLRN, studentName: `${formData.studentFirstName} ${formData.studentLastName}` })
       };
       
-      // Save Parent/Teacher User Profile
       await setDoc(doc(db, "users", newUserId), userData);
 
-      // AUTOMATION: If creating a parent, automatically register the student in the database for the Teacher
       if (role === "parent") {
         const studentData = {
           firstName: formData.studentFirstName,
@@ -171,6 +172,43 @@ export default function AdminHome() {
     }
   };
 
+  // --- NEW: Inline Room Edit Logic ---
+  const handleEditRoom = (room) => {
+    setEditingRoomId(room.id);
+    setEditTeacherId(room.assignedTeacherId || "");
+  };
+
+  const handleSaveRoomEdit = async (room) => {
+    try {
+      const newTeacher = users.find(u => u.id === editTeacherId);
+      const teacherName = newTeacher ? `${newTeacher.firstName} ${newTeacher.lastName}` : "Unassigned";
+      const fullRoomName = `Grade ${room.grade} - ${room.name}`;
+
+      // Update the room record
+      await updateDoc(doc(db, "rooms", room.id), {
+        assignedTeacherId: editTeacherId || "",
+        assignedTeacherName: teacherName
+      });
+
+      // Clear the assignment for the old teacher if it changed
+      if (room.assignedTeacherId && room.assignedTeacherId !== editTeacherId) {
+        await updateDoc(doc(db, "users", room.assignedTeacherId), { assignedRoom: "" });
+      }
+
+      // Assign the new teacher to the room
+      if (editTeacherId) {
+        await updateDoc(doc(db, "users", editTeacherId), { assignedRoom: fullRoomName });
+      }
+
+      showMessage("Room updated successfully!");
+      setEditingRoomId(null);
+      fetchRooms();
+      fetchUsers();
+    } catch (error) {
+      showMessage("Failed to update room.", "error");
+    }
+  };
+
   const handleDeleteRoom = async (roomId, name) => {
     if (window.confirm(`Are you sure you want to delete the room ${name}?`)) {
       try {
@@ -183,7 +221,7 @@ export default function AdminHome() {
     }
   };
 
-  // Filters & Sorting
+  // --- Filters & Sorting ---
   let filteredUsers = users.filter(u => u.role === roleFilter);
 
   if (roleFilter === "parent") {
@@ -229,12 +267,15 @@ export default function AdminHome() {
         .toast-error { border-left: 6px solid #ef4444; color: #991b1b; }
       `}</style>
 
+      {/* Floating Pop-up Notification */}
       <div className={`toast-popup ${feedback.show ? 'show' : ''} ${feedback.type === 'error' ? 'toast-error' : 'toast-success'}`}>
         {feedback.text}
       </div>
 
       <div className="admin-nav-bar">
-        <button className="admin-burger" onClick={() => setIsDrawerOpen(true)}>☰ Admin Menu</button>
+        <button className="admin-burger" onClick={() => setIsDrawerOpen(true)}>
+          ☰ Admin Menu
+        </button>
       </div>
 
       <div className={`admin-overlay ${isDrawerOpen ? "open" : ""}`} onClick={() => setIsDrawerOpen(false)}></div>
@@ -245,72 +286,142 @@ export default function AdminHome() {
         </div>
         
         <div className="drawer-link" onClick={() => setIsCreateMenuOpen(!isCreateMenuOpen)} style={{ fontWeight: 'bold' }}>
-          Create
+          ➕ Create
           <span style={{ fontSize: '0.8rem', transform: isCreateMenuOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▼</span>
         </div>
         
         {isCreateMenuOpen && (
           <div className="sub-menu">
-            <div className={`sub-drawer-link ${activeView === "create-room" ? "active" : ""}`} onClick={() => { setActiveView("create-room"); setIsDrawerOpen(false); }}>Create Room</div>
-            <div className={`sub-drawer-link ${activeView === "create-teacher" ? "active" : ""}`} onClick={() => { setActiveView("create-teacher"); setIsDrawerOpen(false); }}>Teacher Account</div>
-            <div className={`sub-drawer-link ${activeView === "create-parent" ? "active" : ""}`} onClick={() => { setActiveView("create-parent"); setIsDrawerOpen(false); }}>Parent Account</div>
+            <div className={`sub-drawer-link ${activeView === "create-room" ? "active" : ""}`} onClick={() => { setActiveView("create-room"); setIsDrawerOpen(false); }}>
+              🏫 Create Room
+            </div>
+            <div className={`sub-drawer-link ${activeView === "create-teacher" ? "active" : ""}`} onClick={() => { setActiveView("create-teacher"); setIsDrawerOpen(false); }}>
+              👩‍🏫 Teacher Account
+            </div>
+            <div className={`sub-drawer-link ${activeView === "create-parent" ? "active" : ""}`} onClick={() => { setActiveView("create-parent"); setIsDrawerOpen(false); }}>
+              👨‍👩‍👧 Parent Account
+            </div>
           </div>
         )}
 
         <div className={`drawer-link ${activeView === "manage" ? "active" : ""}`} onClick={() => { setActiveView("manage"); setIsDrawerOpen(false); setCurrentPage(1); }} style={{ fontWeight: 'bold' }}>
-          Manage Users
+          👥 Manage Users
         </div>
       </div>
 
-      {/* VIEW: CREATE ROOM */}
+      {/* =========================================
+          VIEW: CREATE ROOM
+      ========================================= */}
       {activeView === "create-room" && (
         <div className="card">
           <h3>Create New Room</h3>
           <p className="subtext">Create class sections and optionally assign a teacher.</p>
           <form onSubmit={handleCreateRoom} style={{ display: 'flex', flexDirection: 'column', gap: '15px', maxWidth: '500px' }}>
+            
             <label style={{ fontWeight: '600', fontSize: '0.875rem' }}>Grade Level</label>
             <select className="auth-input" name="grade" value={roomForm.grade} onChange={handleRoomChange} required>
               {[1, 2, 3, 4, 5, 6].map(g => <option key={g} value={g}>Grade {g}</option>)}
             </select>
+
             <label style={{ fontWeight: '600', fontSize: '0.875rem' }}>Section Name</label>
             <input className="auth-input" type="text" name="section" placeholder="e.g. Apollo" value={roomForm.section} onChange={handleRoomChange} required />
+
             <label style={{ fontWeight: '600', fontSize: '0.875rem' }}>Assign Adviser (Optional)</label>
             <select className="auth-input" name="assignedTeacherId" value={roomForm.assignedTeacherId} onChange={handleRoomChange}>
               <option value="">-- Leave Unassigned --</option>
-              {users.filter(u => u.role === "teacher").sort((a, b) => (a.lastName || "").localeCompare(b.lastName || "")).map(t => (
-                  <option key={t.id} value={t.id}>{t.lastName}, {t.firstName} {t.middleInitial ? t.middleInitial + '.' : ''}</option>
+              {users
+                .filter(u => u.role === "teacher")
+                .sort((a, b) => (a.lastName || "").localeCompare(b.lastName || ""))
+                .map(t => (
+                  <option key={t.id} value={t.id}>
+                    {t.lastName}, {t.firstName} {t.middleInitial ? t.middleInitial + '.' : ''}
+                  </option>
               ))}
             </select>
+
             <button className="btn-primary" type="submit" style={{ marginTop: '10px' }}>Create Room</button>
           </form>
+
           <hr style={{ margin: '2.5rem 0 1.5rem 0', border: 'none', borderTop: '1px solid #e5e7eb' }} />
+          
           <h3>Active Rooms</h3>
           <div className="table-responsive">
             <table>
               <thead>
-                <tr><th>Grade</th><th>Section</th><th>Assigned Adviser</th><th>Actions</th></tr>
+                <tr>
+                  <th>Grade</th>
+                  <th>Section</th>
+                  <th>Assigned Adviser</th>
+                  <th>Actions</th>
+                </tr>
               </thead>
               <tbody>
-                {rooms.length === 0 ? <tr><td colSpan="4" className="empty-state">No rooms have been created yet.</td></tr> : rooms.map(room => (
+                {rooms.length === 0 ? (
+                  <tr><td colSpan="4" className="empty-state">No rooms have been created yet.</td></tr>
+                ) : (
+                  rooms.map(room => (
                     <tr key={room.id}>
                       <td style={{ fontWeight: '600' }}>Grade {room.grade}</td>
                       <td>{room.name}</td>
-                      <td style={{ color: room.assignedTeacherName === "Unassigned" ? '#9ca3af' : '#1877f2', fontWeight: '500' }}>{room.assignedTeacherName || "Unassigned"}</td>
-                      <td><button className="btn-outline" style={{ color: '#dc2626', borderColor: '#dc2626', padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => handleDeleteRoom(room.id, room.name)}>Delete</button></td>
+                      <td>
+                        {/* INLINE EDIT MODE FOR TEACHER ASSIGNMENT */}
+                        {editingRoomId === room.id ? (
+                          <select className="auth-input" value={editTeacherId} onChange={(e) => setEditTeacherId(e.target.value)}>
+                            <option value="">-- Unassigned --</option>
+                            {users
+                              .filter(u => u.role === "teacher")
+                              .sort((a, b) => (a.lastName || "").localeCompare(b.lastName || ""))
+                              .map(t => (
+                                <option key={t.id} value={t.id}>
+                                  {t.lastName}, {t.firstName}
+                                </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span style={{ color: room.assignedTeacherName === "Unassigned" ? '#9ca3af' : '#1877f2', fontWeight: '500' }}>
+                            {room.assignedTeacherName || "Unassigned"}
+                          </span>
+                        )}
+                      </td>
+                      <td>
+                        {/* TOGGLE SAVE/CANCEL or EDIT/DELETE */}
+                        {editingRoomId === room.id ? (
+                          <div style={{ display: 'flex', gap: '5px' }}>
+                            <button className="btn-outline" style={{ color: '#10b981', borderColor: '#10b981', padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => handleSaveRoomEdit(room)}>
+                              Save
+                            </button>
+                            <button className="btn-outline" style={{ color: '#6b7280', borderColor: '#6b7280', padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => setEditingRoomId(null)}>
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', gap: '5px' }}>
+                            <button className="btn-outline" style={{ color: '#1877f2', borderColor: '#1877f2', padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => handleEditRoom(room)}>
+                              Edit
+                            </button>
+                            <button className="btn-outline" style={{ color: '#dc2626', borderColor: '#dc2626', padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => handleDeleteRoom(room.id, room.name)}>
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </td>
                     </tr>
                   ))
-                }
+                )}
               </tbody>
             </table>
           </div>
         </div>
       )}
 
-      {/* VIEW: CREATE TEACHER */}
+      {/* =========================================
+          VIEW: CREATE TEACHER
+      ========================================= */}
       {activeView === "create-teacher" && (
         <div className="card">
           <h3>Create Teacher Account</h3>
           <form onSubmit={(e) => handleCreateUser(e, "teacher")} style={{ display: 'flex', flexDirection: 'column', gap: '15px', maxWidth: '500px' }}>
+            
             <div style={{ display: 'flex', gap: '10px' }}>
               <div style={{ flex: 2 }}>
                 <label style={{ fontWeight: '600', fontSize: '0.875rem' }}>First Name</label>
@@ -321,24 +432,32 @@ export default function AdminHome() {
                 <input className="auth-input" type="text" name="middleInitial" placeholder="X" value={formData.middleInitial} onChange={handleUserChange} maxLength="1" />
               </div>
             </div>
+
             <label style={{ fontWeight: '600', fontSize: '0.875rem' }}>Last Name</label>
             <input className="auth-input" type="text" name="lastName" value={formData.lastName} onChange={handleUserChange} required />
+
             <label style={{ fontWeight: '600', fontSize: '0.875rem' }}>Email Address</label>
             <input className="auth-input" type="email" name="email" value={formData.email} onChange={handleUserChange} required />
+
             <label style={{ fontWeight: '600', fontSize: '0.875rem' }}>Assign Password</label>
             <input className="auth-input" type="text" name="password" placeholder="Password" value={formData.password} onChange={handleUserChange} required />
+
             <button className="btn-primary" type="submit" style={{ marginTop: '10px' }}>Create Teacher Profile</button>
           </form>
         </div>
       )}
 
-      {/* VIEW: CREATE PARENT */}
+      {/* =========================================
+          VIEW: CREATE PARENT
+      ========================================= */}
       {activeView === "create-parent" && (
         <div className="card">
           <h3>Create Parent Account</h3>
           <form onSubmit={(e) => handleCreateUser(e, "parent")} style={{ display: 'flex', flexDirection: 'column', gap: '15px', maxWidth: '500px' }}>
             
-            <label style={{ fontWeight: '600', fontSize: '0.875rem', color: '#1877f2', marginTop: '10px', borderBottom: '1px solid #e5e7eb', paddingBottom: '5px' }}>Parent Information</label>
+            <label style={{ fontWeight: '600', fontSize: '0.875rem', color: '#1877f2', marginTop: '10px', borderBottom: '1px solid #e5e7eb', paddingBottom: '5px' }}>
+              Parent Information
+            </label>
             <div style={{ display: 'flex', gap: '10px' }}>
               <div style={{ flex: 2 }}>
                 <input className="auth-input" type="text" name="firstName" placeholder="First Name" value={formData.firstName} onChange={handleUserChange} required />
@@ -347,20 +466,28 @@ export default function AdminHome() {
                 <input className="auth-input" type="text" name="middleInitial" placeholder="M.I." value={formData.middleInitial} onChange={handleUserChange} maxLength="1" />
               </div>
             </div>
+
             <input className="auth-input" type="text" name="lastName" placeholder="Last Name" value={formData.lastName} onChange={handleUserChange} required />
             <input className="auth-input" type="email" name="email" placeholder="Email Address" value={formData.email} onChange={handleUserChange} required />
             <input className="auth-input" type="text" name="password" placeholder="Password" value={formData.password} onChange={handleUserChange} required />
 
-            <label style={{ fontWeight: '600', fontSize: '0.875rem', color: '#10b981', marginTop: '10px', borderBottom: '1px solid #e5e7eb', paddingBottom: '5px' }}>Student Information (Auto-Registers Student)</label>
+            <label style={{ fontWeight: '600', fontSize: '0.875rem', color: '#10b981', marginTop: '10px', borderBottom: '1px solid #e5e7eb', paddingBottom: '5px' }}>
+              Student Information (Auto-Registers Student)
+            </label>
             <div style={{ display: 'flex', gap: '10px' }}>
               <input className="auth-input" style={{ flex: 1 }} type="text" name="studentFirstName" placeholder="Student First Name" value={formData.studentFirstName} onChange={handleUserChange} required />
               <input className="auth-input" style={{ flex: 1 }} type="text" name="studentLastName" placeholder="Student Last Name" value={formData.studentLastName} onChange={handleUserChange} required />
             </div>
+
             <input className="auth-input" type="text" inputMode="numeric" pattern="\d*" name="studentLRN" placeholder="12-digit LRN" maxLength="12" value={formData.studentLRN} onChange={handleUserChange} required />
             
             <select className="auth-input" name="assignedRoom" value={formData.assignedRoom} onChange={handleUserChange} required>
               <option value="">-- Assign Student to Room --</option>
-              {rooms.map(r => <option key={r.id} value={`Grade ${r.grade} - ${r.name}`}>Grade {r.grade} - {r.name}</option>)}
+              {rooms.map(r => (
+                <option key={r.id} value={`Grade ${r.grade} - ${r.name}`}>
+                  Grade {r.grade} - {r.name}
+                </option>
+              ))}
             </select>
 
             <button className="btn-primary" type="submit" style={{ marginTop: '15px' }}>Create Parent & Student Profile</button>
@@ -368,10 +495,13 @@ export default function AdminHome() {
         </div>
       )}
 
-      {/* VIEW: MANAGE USERS */}
+      {/* =========================================
+          VIEW: MANAGE USERS 
+      ========================================= */}
       {activeView === "manage" && (
         <div className="card">
           <h3>Manage Users</h3>
+          
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '1.5rem', padding: '1rem', backgroundColor: '#f9fafb', borderRadius: '8px' }}>
             <div style={{ flex: '1', minWidth: '150px' }}>
               <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Role Filter</label>
@@ -380,6 +510,7 @@ export default function AdminHome() {
                 <option value="parent">Parents</option>
               </select>
             </div>
+
             {roleFilter === "parent" && (
               <>
                 <div style={{ flex: '1', minWidth: '120px' }}>
@@ -389,6 +520,7 @@ export default function AdminHome() {
                     {[1, 2, 3, 4, 5, 6].map(g => <option key={g} value={g}>Grade {g}</option>)}
                   </select>
                 </div>
+
                 <div style={{ flex: '1', minWidth: '150px' }}>
                   <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Section</label>
                   <select className="auth-input" value={sectionFilter} onChange={(e) => { setSectionFilter(e.target.value); setCurrentPage(1); }} disabled={!gradeFilter}>
@@ -403,28 +535,57 @@ export default function AdminHome() {
           <div className="table-responsive">
             <table>
               <thead>
-                <tr><th>Name (A-Z)</th><th>Role</th><th>Email</th><th>Assigned Room</th>{roleFilter === "parent" && <th>Student LRN</th>}<th>Actions</th></tr>
+                <tr>
+                  <th>Name (A-Z)</th>
+                  <th>Role</th>
+                  <th>Email</th>
+                  <th>Assigned Room</th>
+                  {roleFilter === "parent" && <th>Student LRN</th>}
+                  <th>Actions</th>
+                </tr>
               </thead>
               <tbody>
-                {currentDisplayedUsers.length === 0 ? <tr><td colSpan="6" className="empty-state">No users match the current filters.</td></tr> : currentDisplayedUsers.map(user => (
+                {currentDisplayedUsers.length === 0 ? (
+                  <tr><td colSpan="6" className="empty-state">No users match the current filters.</td></tr>
+                ) : (
+                  currentDisplayedUsers.map(user => (
                     <tr key={user.id}>
-                      <td style={{ fontWeight: '600' }}>{user.lastName}, {user.firstName} {user.middleInitial ? user.middleInitial + '.' : ''}</td>
-                      <td><span className="badge" style={{ backgroundColor: user.role === 'teacher' ? '#dbeafe' : '#fef3c7', color: user.role === 'teacher' ? '#1e3a8a' : '#92400e' }}>{user.role.toUpperCase()}</span></td>
+                      <td style={{ fontWeight: '600' }}>
+                        {user.lastName}, {user.firstName} {user.middleInitial ? user.middleInitial + '.' : ''}
+                      </td>
+                      <td>
+                        <span className="badge" style={{ backgroundColor: user.role === 'teacher' ? '#dbeafe' : '#fef3c7', color: user.role === 'teacher' ? '#1e3a8a' : '#92400e' }}>
+                          {user.role.toUpperCase()}
+                        </span>
+                      </td>
                       <td style={{ color: '#4b5563', fontSize: '0.875rem' }}>{user.email}</td>
                       <td style={{ color: '#6b7280', fontSize: '0.875rem' }}>{user.assignedRoom || "Unassigned"}</td>
                       {roleFilter === "parent" && <td style={{ color: '#6b7280', fontSize: '0.875rem' }}>{user.studentLRN || "N/A"}</td>}
-                      <td><button className="btn-outline" style={{ color: '#dc2626', borderColor: '#dc2626', padding: '6px 12px', fontSize: '0.75rem' }} onClick={() => handleDeleteUser(user.id, user.fullName)}>Delete</button></td>
+                      <td>
+                        <button className="btn-outline" style={{ color: '#dc2626', borderColor: '#dc2626', padding: '6px 12px', fontSize: '0.75rem' }} onClick={() => handleDeleteUser(user.id, user.fullName)}>
+                          Delete
+                        </button>
+                      </td>
                     </tr>
                   ))
-                }
+                )}
               </tbody>
             </table>
           </div>
+
           {totalItems > 0 && (
             <div className="pagination-controls" style={{ marginTop: '1.5rem' }}>
-              <button className="btn-outline" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>Previous</button>
-              <span style={{ fontSize: '0.875rem', fontWeight: 'bold', color: '#374151' }}>{Math.min(indexOfLastItem, totalItems)} / {totalItems}</span>
-              <button className="btn-outline" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>Next</button>
+              <button className="btn-outline" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>
+                Previous
+              </button>
+              
+              <span style={{ fontSize: '0.875rem', fontWeight: 'bold', color: '#374151' }}>
+                {Math.min(indexOfLastItem, totalItems)} / {totalItems}
+              </span>
+              
+              <button className="btn-outline" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>
+                Next
+              </button>
             </div>
           )}
         </div>
