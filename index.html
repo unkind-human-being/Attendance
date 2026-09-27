@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/logo.png" />
     
-    <!-- ADDED ?v=2 TO FORCE CHROME TO GET THE NEWEST MANIFEST -->
-    <link rel="manifest" href="/manifest.json?v=2" />
+    <!-- Bumped to v=3 to clear the broken image cache -->
+    <link rel="manifest" href="/manifest.json?v=3" />
     
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -20,11 +20,11 @@
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
     
-    <!-- ADDED ?v=2 TO FORCE CHROME TO UPDATE THE SERVICE WORKER -->
+    <!-- Bumped to v=3 -->
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js?v=2');
+          navigator.serviceWorker.register('/sw.js?v=3');
         });
       }
     </script>
