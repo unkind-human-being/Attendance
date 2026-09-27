@@ -1,8 +1,12 @@
-// This forces Chrome to recognize the app as installable
 self.addEventListener('install', (e) => {
   self.skipWaiting();
 });
 
+self.addEventListener('activate', (e) => {
+  return self.clients.claim();
+});
+
 self.addEventListener('fetch', (e) => {
-  // Chrome requires a fetch event listener to pass the PWA install criteria
+  // This tells Chrome: "Yes, I am a real service worker handling network requests!"
+  e.respondWith(fetch(e.request).catch(() => new Response("Offline")));
 });
