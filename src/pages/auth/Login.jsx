@@ -1,31 +1,71 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { loginUser } from "../../firebase/attendanceService";
+import { auth, db } from "../../firebase/firebase";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
 
 export default function Login() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  
+  // PWA Install Prompt State
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  
   const navigate = useNavigate();
-  const [credentials, setCredentials] = useState({ email: "", password: "" });
-  const [feedback, setFeedback] = useState({ text: "", type: "" });
 
-  const handleChange = (e) => setCredentials({ ...credentials, [e.target.name]: e.target.value });
+  useEffect(() => {
+    // Listen for Chrome's signal that the app can be installed
+    const handleBeforeInstallPrompt = (e) => {
+      e.preventDefault(); // Prevent the mini-infobar from appearing on mobile
+      setDeferredPrompt(e); // Save the event so we can trigger it from our button
+    };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setFeedback({ text: "", type: "" });
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
 
-    const response = await loginUser(credentials.email, credentials.password);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    };
+  }, []);
 
-    if (response.success) {
-      const userRole = response.profile?.role;
-      
-      // Route based on role
-      if (userRole === "admin") navigate("/admin/home");
-      else if (userRole === "teacher") navigate("/teacher/home");
-      else if (userRole === "parent") navigate("/parent/home");
-      else setFeedback({ text: "Invalid user role assigned.", type: "error" });
-    } else {
-      setFeedback({ text: response.error, type: "error" });
+  const handleInstallApp = async () => {
+    if (!deferredPrompt) return;
+    
+    // Show the native install prompt
+    deferredPrompt.prompt();
+    
+    // Wait for the user to respond to the prompt
+    const { outcome } = await deferredPrompt.userChoice;
+    
+    if (outcome === "accepted") {
+      console.log("User accepted the install prompt");
+      setDeferredPrompt(null); // Hide the button once installed
     }
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+
+      const userDoc = await getDoc(doc(db, "users", user.uid));
+      if (userDoc.exists()) {
+        const role = userDoc.data().role;
+        if (role === "admin") navigate("/admin/home");
+        else if (role === "teacher") navigate("/teacher/home");
+        else navigate("/parent/home");
+      } else {
+        setError("User profile not found in database.");
+      }
+    } catch (err) {
+      setError("Invalid email or password.");
+    }
+    setLoading(false);
   };
 
   return (
@@ -33,22 +73,49 @@ export default function Login() {
       <div className="auth-card">
         <h2 className="auth-title">Welcome to Smart PTA</h2>
         
-        {feedback.text && (
-          <div style={{ padding: '12px 16px', marginBottom: '1rem', borderRadius: '8px', fontSize: '0.875rem', textAlign: 'center', backgroundColor: feedback.type === 'error' ? '#fee2e2' : '#d1fae5', color: feedback.type === 'error' ? '#dc2626' : '#059669' }}>
-            {feedback.text}
+        {/* The Native "Download App" Button */}
+        {deferredPrompt && (
+          <div style={{ marginBottom: '1.5rem', padding: '1rem', backgroundColor: '#eff6ff', borderRadius: '8px', border: '1px solid #bfdbfe', textAlign: 'center' }}>
+            <p style={{ margin: '0 0 10px 0', fontSize: '0.875rem', color: '#1e3a8a', fontWeight: '600' }}>
+              For the best experience, install our native app:
+            </p>
+            <button 
+              onClick={handleInstallApp} 
+              className="btn-primary" 
+              style={{ width: '100%', backgroundColor: '#10b981', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+            >
+              📱 Download App
+            </button>
           </div>
         )}
 
-        <form className="auth-form" onSubmit={handleSubmit}>
-          <input className="auth-input" type="email" name="email" placeholder="Email Address" value={credentials.email} onChange={handleChange} required />
-          <input className="auth-input" type="password" name="password" placeholder="Password" value={credentials.password} onChange={handleChange} required />
-          <button className="btn-primary" type="submit">Sign In</button>
+        {error && <div style={{ color: "#dc2626", marginBottom: "1rem", textAlign: "center", fontWeight: "500" }}>{error}</div>}
+        
+        <form className="auth-form" onSubmit={handleLogin}>
+          <input
+            type="email"
+            placeholder="Email Address"
+            className="auth-input"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+          <input
+            type="password"
+            placeholder="Password"
+            className="auth-input"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
+          <button type="submit" className="auth-button" disabled={loading}>
+            {loading ? "Signing In..." : "Sign In"}
+          </button>
         </form>
         
-        {/* Registration Link Completely Removed */}
-        <div style={{ textAlign: "center", marginTop: "1.5rem", fontSize: "0.875rem", color: "#6b7280" }}>
-          Contact your school administrator for account access.
-        </div>
+        <p style={{ marginTop: "1.5rem", textAlign: "center", fontSize: "0.875rem", color: "#6b7280" }}>
+          Contact your school administrator for account credentials.
+        </p>
       </div>
     </div>
   );
