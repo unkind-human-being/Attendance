@@ -286,20 +286,20 @@ export default function AdminHome() {
         </div>
         
         <div className="drawer-link" onClick={() => setIsCreateMenuOpen(!isCreateMenuOpen)} style={{ fontWeight: 'bold' }}>
-          ➕ Create
+           Create
           <span style={{ fontSize: '0.8rem', transform: isCreateMenuOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▼</span>
         </div>
         
         {isCreateMenuOpen && (
           <div className="sub-menu">
             <div className={`sub-drawer-link ${activeView === "create-room" ? "active" : ""}`} onClick={() => { setActiveView("create-room"); setIsDrawerOpen(false); }}>
-              🏫 Create Room
+             Create Room
             </div>
             <div className={`sub-drawer-link ${activeView === "create-teacher" ? "active" : ""}`} onClick={() => { setActiveView("create-teacher"); setIsDrawerOpen(false); }}>
-              👩‍🏫 Teacher Account
+              Teacher Account
             </div>
             <div className={`sub-drawer-link ${activeView === "create-parent" ? "active" : ""}`} onClick={() => { setActiveView("create-parent"); setIsDrawerOpen(false); }}>
-              👨‍👩‍👧 Parent Account
+              Parent Account
             </div>
           </div>
         )}

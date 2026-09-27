@@ -220,7 +220,7 @@ export default function TeacherHome() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '10px' }}>
             <h3 style={{ margin: 0 }}>Class Roster</h3>
             <button className="btn-primary" style={{ backgroundColor: '#10b981' }} onClick={() => setCurrentView("attendance")}>
-              📅 Take Daily Attendance
+             Take Daily Attendance
             </button>
           </div>
 

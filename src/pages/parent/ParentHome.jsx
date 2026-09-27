@@ -103,7 +103,7 @@ export default function ParentHome() {
       {/* 2. LATEST NOTIFICATION FROM TEACHER */}
       <div className="card" style={{ borderLeft: "4px solid #10b981", padding: "1.25rem" }}>
         <h3 style={{ fontSize: '1rem', color: '#374151', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          🔔 Latest Update
+         Latest Update
         </h3>
         
         {latestNotification ? (
@@ -126,7 +126,7 @@ export default function ParentHome() {
         
         <Link to="/parent/attendance" style={{ textDecoration: 'none' }}>
           <div className="card" style={{ margin: 0, textAlign: 'center', padding: '1.5rem', transition: 'transform 0.2s', cursor: 'pointer' }} onMouseOver={e => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}>
-            <div style={{ fontSize: '2rem', marginBottom: '10px' }}>📅</div>
+            <div style={{ fontSize: '2rem', marginBottom: '10px' }}></div>
             <h4 style={{ color: '#111827', margin: 0 }}>Attendance Log</h4>
             <p style={{ color: '#6b7280', fontSize: '0.75rem', margin: '5px 0 0 0' }}>View history</p>
           </div>
@@ -134,7 +134,7 @@ export default function ParentHome() {
 
         <Link to="/parent/grades" style={{ textDecoration: 'none' }}>
           <div className="card" style={{ margin: 0, textAlign: 'center', padding: '1.5rem', transition: 'transform 0.2s', cursor: 'pointer' }} onMouseOver={e => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}>
-            <div style={{ fontSize: '2rem', marginBottom: '10px' }}>📊</div>
+            <div style={{ fontSize: '2rem', marginBottom: '10px' }}></div>
             <h4 style={{ color: '#111827', margin: 0 }}>Academic Grades</h4>
             <p style={{ color: '#6b7280', fontSize: '0.75rem', margin: '5px 0 0 0' }}>Check progress</p>
           </div>

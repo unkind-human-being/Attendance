@@ -84,7 +84,7 @@ export default function Login() {
               className="btn-primary" 
               style={{ width: '100%', backgroundColor: '#10b981', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
             >
-              📱 Download App
+             Download App
             </button>
           </div>
         )}
