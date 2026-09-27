@@ -4,10 +4,13 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     
-    <!-- 1. Lock the zoom and fit the screen perfectly (handles notches) -->
+    <!-- THIS IS THE MAGIC LINK THAT TELLS THE PHONE TO HIDE THE URL BAR -->
+    <link rel="manifest" href="/manifest.json" />
+    
+    <!-- 1. Lock the zoom and fit the screen perfectly -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     
-    <!-- 2. Force iOS Safari into Standalone App Mode (Hides URL Bar) -->
+    <!-- 2. Force iOS Safari into Standalone App Mode -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Smart PTA" />
@@ -21,5 +24,14 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
+    
+    <!-- ADD THIS SCRIPT TO REGISTER THE SERVICE WORKER -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js');
+        });
+      }
+    </script>
   </body>
 </html>
