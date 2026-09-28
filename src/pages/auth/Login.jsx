@@ -18,8 +18,8 @@ export default function Login() {
   useEffect(() => {
     // Listen for Chrome's signal that the app can be installed
     const handleBeforeInstallPrompt = (e) => {
-      e.preventDefault(); // Prevent the mini-infobar from appearing on mobile
-      setDeferredPrompt(e); // Save the event so we can trigger it from our button
+      e.preventDefault(); 
+      setDeferredPrompt(e); 
     };
 
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
@@ -32,15 +32,11 @@ export default function Login() {
   const handleInstallApp = async () => {
     if (!deferredPrompt) return;
     
-    // Show the native install prompt
     deferredPrompt.prompt();
-    
-    // Wait for the user to respond to the prompt
     const { outcome } = await deferredPrompt.userChoice;
     
     if (outcome === "accepted") {
-      console.log("User accepted the install prompt");
-      setDeferredPrompt(null); // Hide the button once installed
+      setDeferredPrompt(null); 
     }
   };
 
@@ -53,14 +49,18 @@ export default function Login() {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
+      // Check the database for specific Teacher/Parent roles
       const userDoc = await getDoc(doc(db, "users", user.uid));
+      
       if (userDoc.exists()) {
         const role = userDoc.data().role;
-        if (role === "admin") navigate("/admin/home");
-        else if (role === "teacher") navigate("/teacher/home");
-        else navigate("/parent/home");
+        if (role === "teacher") navigate("/teacher/home");
+        else if (role === "parent") navigate("/parent/home");
+        else navigate("/admin/home"); 
       } else {
-        setError("User profile not found in database.");
+        // FIX: If the user passes Firebase Auth but has no database document, 
+        // they are the master Admin. Route them to the admin panel.
+        navigate("/admin/home");
       }
     } catch (err) {
       setError("Invalid email or password.");
@@ -84,7 +84,7 @@ export default function Login() {
               className="btn-primary" 
               style={{ width: '100%', backgroundColor: '#10b981', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
             >
-             Download App
+               Download App
             </button>
           </div>
         )}
