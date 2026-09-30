@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import SidebarLayout from "../../components/SidebarLayout";
 import { db, firebaseConfig } from "../../firebase/firebase";
-import { collection, getDocs, addDoc, deleteDoc, doc, updateDoc, setDoc } from "firebase/firestore";
+import { collection, getDocs, addDoc, deleteDoc, doc, updateDoc, setDoc, query, where } from "firebase/firestore";
 import { initializeApp } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword, signOut } from "firebase/auth";
 
@@ -16,26 +16,18 @@ export default function AdminHome() {
   const [feedback, setFeedback] = useState({ text: "", type: "", show: false });
   
   const [formData, setFormData] = useState({
-    firstName: "",
-    middleInitial: "",
-    lastName: "",
-    email: "",
-    password: "",
-    assignedRoom: "",
-    studentLRN: "",
-    studentFirstName: "",
-    studentLastName: ""
+    firstName: "", middleInitial: "", lastName: "", email: "", password: "", assignedRoom: "", studentLRN: "", studentFirstName: "", studentLastName: ""
   });
 
-  const [roomForm, setRoomForm] = useState({
-    grade: "1",
-    section: "",
-    assignedTeacherId: ""
-  });
+  const [roomForm, setRoomForm] = useState({ grade: "1", section: "", assignedTeacherId: "" });
 
-  // --- NEW: Edit Room State ---
+  // Room Edit States
   const [editingRoomId, setEditingRoomId] = useState(null);
   const [editTeacherId, setEditTeacherId] = useState("");
+
+  // User Edit States
+  const [editingUser, setEditingUser] = useState(null);
+  const [newRoomAssignment, setNewRoomAssignment] = useState("");
 
   const [roleFilter, setRoleFilter] = useState("teacher");
   const [gradeFilter, setGradeFilter] = useState("");
@@ -72,7 +64,6 @@ export default function AdminHome() {
     let { name, value } = e.target;
     if (name === "middleInitial") value = value.toUpperCase().slice(0, 1);
     if (name === "studentLRN") value = value.replace(/\D/g, '').slice(0, 12);
-    
     setFormData({ ...formData, [name]: value });
   };
 
@@ -89,13 +80,8 @@ export default function AdminHome() {
       const fullName = `${formData.firstName} ${formattedMI} ${formData.lastName}`.replace(/\s+/g, " ").trim();
 
       const userData = {
-        fullName,
-        firstName: formData.firstName,
-        middleInitial: formData.middleInitial,
-        lastName: formData.lastName,
-        email: formData.email,
-        role: role,
-        assignedRoom: role === "teacher" ? "" : formData.assignedRoom,
+        fullName, firstName: formData.firstName, middleInitial: formData.middleInitial, lastName: formData.lastName,
+        email: formData.email, role: role, assignedRoom: role === "teacher" ? "" : formData.assignedRoom,
         ...(role === "parent" && { studentLRN: formData.studentLRN, studentName: `${formData.studentFirstName} ${formData.studentLastName}` })
       };
       
@@ -103,25 +89,50 @@ export default function AdminHome() {
 
       if (role === "parent") {
         const studentData = {
-          firstName: formData.studentFirstName,
-          lastName: formData.studentLastName,
+          firstName: formData.studentFirstName, lastName: formData.studentLastName,
           fullName: `${formData.studentFirstName} ${formData.studentLastName}`.trim(),
-          lrn: formData.studentLRN,
-          room: formData.assignedRoom,
-          parentUid: newUserId
+          lrn: formData.studentLRN, room: formData.assignedRoom, parentUid: newUserId
         };
         await addDoc(collection(db, "students"), studentData);
       }
 
       await signOut(secondaryAuth);
-
       showMessage(`${role.charAt(0).toUpperCase() + role.slice(1)} account created successfully!`);
-      
       setFormData({ firstName: "", middleInitial: "", lastName: "", email: "", password: "", assignedRoom: "", studentLRN: "", studentFirstName: "", studentLastName: "" });
       fetchUsers();
     } catch (error) {
-      console.error("Auth Error:", error);
       showMessage(error.message || "Error creating user.", "error");
+    }
+  };
+
+  // --- NEW: Inline User Edit Logic (Assign/Leave Room) ---
+  const handleUpdateUserRoom = async (e) => {
+    e.preventDefault();
+    if (!editingUser) return;
+
+    try {
+      // 1. Update the parent/teacher profile
+      await updateDoc(doc(db, "users", editingUser.id), {
+        assignedRoom: newRoomAssignment
+      });
+
+      // 2. If it's a Parent, heavily sync the linked Student so rosters stay accurate
+      if (editingUser.role === "parent" && editingUser.studentLRN) {
+        const studentQuery = query(collection(db, "students"), where("lrn", "==", editingUser.studentLRN));
+        const studentSnapshot = await getDocs(studentQuery);
+        
+        studentSnapshot.forEach(async (studentDoc) => {
+          await updateDoc(doc(db, "students", studentDoc.id), { room: newRoomAssignment });
+        });
+      }
+
+      showMessage("User room updated successfully!");
+      setEditingUser(null);
+      setNewRoomAssignment("");
+      fetchUsers();
+    } catch (err) {
+      console.error("Error updating user room: ", err);
+      showMessage("Failed to update user.", "error");
     }
   };
 
@@ -137,9 +148,7 @@ export default function AdminHome() {
     }
   };
 
-  const handleRoomChange = (e) => {
-    setRoomForm({ ...roomForm, [e.target.name]: e.target.value });
-  };
+  const handleRoomChange = (e) => setRoomForm({ ...roomForm, [e.target.name]: e.target.value });
 
   const handleCreateRoom = async (e) => {
     e.preventDefault();
@@ -148,31 +157,23 @@ export default function AdminHome() {
       const teacherName = assignedTeacher ? `${assignedTeacher.firstName} ${assignedTeacher.lastName}` : "Unassigned";
       const newRoomName = `Grade ${roomForm.grade} - ${roomForm.section}`;
 
-      const roomData = { 
-        grade: roomForm.grade, 
-        name: roomForm.section, 
-        assignedTeacherId: roomForm.assignedTeacherId || "",
-        assignedTeacherName: teacherName,
-        createdBy: "Admin" 
-      };
-
-      await addDoc(collection(db, "rooms"), roomData);
+      await addDoc(collection(db, "rooms"), { 
+        grade: roomForm.grade, name: roomForm.section, assignedTeacherId: roomForm.assignedTeacherId || "",
+        assignedTeacherName: teacherName, createdBy: "Admin" 
+      });
 
       if (roomForm.assignedTeacherId) {
-        const teacherDocRef = doc(db, "users", roomForm.assignedTeacherId);
-        await updateDoc(teacherDocRef, { assignedRoom: newRoomName });
+        await updateDoc(doc(db, "users", roomForm.assignedTeacherId), { assignedRoom: newRoomName });
       }
 
       showMessage(`${newRoomName} created successfully!`);
       setRoomForm({ grade: "1", section: "", assignedTeacherId: "" });
-      fetchRooms(); 
-      fetchUsers(); 
+      fetchRooms(); fetchUsers(); 
     } catch (error) {
       showMessage("Failed to create room.", "error");
     }
   };
 
-  // --- NEW: Inline Room Edit Logic ---
   const handleEditRoom = (room) => {
     setEditingRoomId(room.id);
     setEditTeacherId(room.assignedTeacherId || "");
@@ -184,26 +185,18 @@ export default function AdminHome() {
       const teacherName = newTeacher ? `${newTeacher.firstName} ${newTeacher.lastName}` : "Unassigned";
       const fullRoomName = `Grade ${room.grade} - ${room.name}`;
 
-      // Update the room record
-      await updateDoc(doc(db, "rooms", room.id), {
-        assignedTeacherId: editTeacherId || "",
-        assignedTeacherName: teacherName
-      });
+      await updateDoc(doc(db, "rooms", room.id), { assignedTeacherId: editTeacherId || "", assignedTeacherName: teacherName });
 
-      // Clear the assignment for the old teacher if it changed
       if (room.assignedTeacherId && room.assignedTeacherId !== editTeacherId) {
         await updateDoc(doc(db, "users", room.assignedTeacherId), { assignedRoom: "" });
       }
-
-      // Assign the new teacher to the room
       if (editTeacherId) {
         await updateDoc(doc(db, "users", editTeacherId), { assignedRoom: fullRoomName });
       }
 
       showMessage("Room updated successfully!");
       setEditingRoomId(null);
-      fetchRooms();
-      fetchUsers();
+      fetchRooms(); fetchUsers();
     } catch (error) {
       showMessage("Failed to update room.", "error");
     }
@@ -221,7 +214,6 @@ export default function AdminHome() {
     }
   };
 
-  // --- Filters & Sorting ---
   let filteredUsers = users.filter(u => u.role === roleFilter);
 
   if (roleFilter === "parent") {
@@ -229,18 +221,13 @@ export default function AdminHome() {
     if (sectionFilter) filteredUsers = filteredUsers.filter(u => u.assignedRoom?.includes(sectionFilter));
   }
 
-  filteredUsers.sort((a, b) => {
-    const nameA = (a.lastName || a.fullName || "").toLowerCase();
-    const nameB = (b.lastName || b.fullName || "").toLowerCase();
-    return nameA.localeCompare(nameB);
-  });
+  filteredUsers.sort((a, b) => (a.lastName || a.fullName || "").localeCompare(b.lastName || b.fullName || ""));
 
   const totalItems = filteredUsers.length;
   const totalPages = Math.ceil(totalItems / itemsPerPage) || 1;
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
   const currentDisplayedUsers = filteredUsers.slice(indexOfFirstItem, indexOfLastItem);
-
   const availableSections = gradeFilter ? rooms.filter(r => r.grade.toString() === gradeFilter) : rooms;
 
   return (
@@ -259,7 +246,6 @@ export default function AdminHome() {
         .drawer-link.active { background: #eff6ff; color: #1877f2; border-left: 4px solid #1877f2; padding-left: calc(1.5rem - 4px); }
         .sub-menu { background-color: #f9fafb; display: flex; flex-direction: column; }
         .sub-drawer-link { padding: 1rem 1.5rem 1rem 2.5rem; cursor: pointer; border-bottom: 1px solid #e5e7eb; color: #4b5563; font-size: 0.9rem; transition: all 0.2s; }
-        .sub-drawer-link:hover { color: #1877f2; }
         .sub-drawer-link.active { background: #eff6ff; color: #1877f2; font-weight: 600; border-left: 4px solid #1877f2; padding-left: calc(2.5rem - 4px); }
         .toast-popup { position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-100px); opacity: 0; background: white; padding: 12px 24px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 9999; font-weight: 600; transition: all 0.4s cubic-bezier(0.18, 0.89, 0.32, 1.28); display: flex; align-items: center; gap: 10px; }
         .toast-popup.show { transform: translateX(-50%) translateY(0); opacity: 1; }
@@ -267,15 +253,12 @@ export default function AdminHome() {
         .toast-error { border-left: 6px solid #ef4444; color: #991b1b; }
       `}</style>
 
-      {/* Floating Pop-up Notification */}
       <div className={`toast-popup ${feedback.show ? 'show' : ''} ${feedback.type === 'error' ? 'toast-error' : 'toast-success'}`}>
         {feedback.text}
       </div>
 
       <div className="admin-nav-bar">
-        <button className="admin-burger" onClick={() => setIsDrawerOpen(true)}>
-          ☰ Admin Menu
-        </button>
+        <button className="admin-burger" onClick={() => setIsDrawerOpen(true)}>☰ Admin Menu</button>
       </div>
 
       <div className={`admin-overlay ${isDrawerOpen ? "open" : ""}`} onClick={() => setIsDrawerOpen(false)}></div>
@@ -286,21 +269,14 @@ export default function AdminHome() {
         </div>
         
         <div className="drawer-link" onClick={() => setIsCreateMenuOpen(!isCreateMenuOpen)} style={{ fontWeight: 'bold' }}>
-           Create
-          <span style={{ fontSize: '0.8rem', transform: isCreateMenuOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▼</span>
+           Create <span style={{ fontSize: '0.8rem', transform: isCreateMenuOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▼</span>
         </div>
         
         {isCreateMenuOpen && (
           <div className="sub-menu">
-            <div className={`sub-drawer-link ${activeView === "create-room" ? "active" : ""}`} onClick={() => { setActiveView("create-room"); setIsDrawerOpen(false); }}>
-             Create Room
-            </div>
-            <div className={`sub-drawer-link ${activeView === "create-teacher" ? "active" : ""}`} onClick={() => { setActiveView("create-teacher"); setIsDrawerOpen(false); }}>
-              Teacher Account
-            </div>
-            <div className={`sub-drawer-link ${activeView === "create-parent" ? "active" : ""}`} onClick={() => { setActiveView("create-parent"); setIsDrawerOpen(false); }}>
-              Parent Account
-            </div>
+            <div className={`sub-drawer-link ${activeView === "create-room" ? "active" : ""}`} onClick={() => { setActiveView("create-room"); setIsDrawerOpen(false); }}>Create Room</div>
+            <div className={`sub-drawer-link ${activeView === "create-teacher" ? "active" : ""}`} onClick={() => { setActiveView("create-teacher"); setIsDrawerOpen(false); }}>Teacher Account</div>
+            <div className={`sub-drawer-link ${activeView === "create-parent" ? "active" : ""}`} onClick={() => { setActiveView("create-parent"); setIsDrawerOpen(false); }}>Parent Account</div>
           </div>
         )}
 
@@ -309,9 +285,6 @@ export default function AdminHome() {
         </div>
       </div>
 
-      {/* =========================================
-          VIEW: CREATE ROOM
-      ========================================= */}
       {activeView === "create-room" && (
         <div className="card">
           <h3>Create New Room</h3>
@@ -329,13 +302,8 @@ export default function AdminHome() {
             <label style={{ fontWeight: '600', fontSize: '0.875rem' }}>Assign Adviser (Optional)</label>
             <select className="auth-input" name="assignedTeacherId" value={roomForm.assignedTeacherId} onChange={handleRoomChange}>
               <option value="">-- Leave Unassigned --</option>
-              {users
-                .filter(u => u.role === "teacher")
-                .sort((a, b) => (a.lastName || "").localeCompare(b.lastName || ""))
-                .map(t => (
-                  <option key={t.id} value={t.id}>
-                    {t.lastName}, {t.firstName} {t.middleInitial ? t.middleInitial + '.' : ''}
-                  </option>
+              {users.filter(u => u.role === "teacher").sort((a, b) => (a.lastName || "").localeCompare(b.lastName || "")).map(t => (
+                  <option key={t.id} value={t.id}>{t.lastName}, {t.firstName} {t.middleInitial ? t.middleInitial + '.' : ''}</option>
               ))}
             </select>
 
@@ -364,44 +332,25 @@ export default function AdminHome() {
                       <td style={{ fontWeight: '600' }}>Grade {room.grade}</td>
                       <td>{room.name}</td>
                       <td>
-                        {/* INLINE EDIT MODE FOR TEACHER ASSIGNMENT */}
                         {editingRoomId === room.id ? (
                           <select className="auth-input" value={editTeacherId} onChange={(e) => setEditTeacherId(e.target.value)}>
                             <option value="">-- Unassigned --</option>
-                            {users
-                              .filter(u => u.role === "teacher")
-                              .sort((a, b) => (a.lastName || "").localeCompare(b.lastName || ""))
-                              .map(t => (
-                                <option key={t.id} value={t.id}>
-                                  {t.lastName}, {t.firstName}
-                                </option>
-                            ))}
+                            {users.filter(u => u.role === "teacher").map(t => <option key={t.id} value={t.id}>{t.lastName}, {t.firstName}</option>)}
                           </select>
                         ) : (
-                          <span style={{ color: room.assignedTeacherName === "Unassigned" ? '#9ca3af' : '#1877f2', fontWeight: '500' }}>
-                            {room.assignedTeacherName || "Unassigned"}
-                          </span>
+                          <span style={{ color: room.assignedTeacherName === "Unassigned" ? '#9ca3af' : '#1877f2', fontWeight: '500' }}>{room.assignedTeacherName || "Unassigned"}</span>
                         )}
                       </td>
                       <td>
-                        {/* TOGGLE SAVE/CANCEL or EDIT/DELETE */}
                         {editingRoomId === room.id ? (
                           <div style={{ display: 'flex', gap: '5px' }}>
-                            <button className="btn-outline" style={{ color: '#10b981', borderColor: '#10b981', padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => handleSaveRoomEdit(room)}>
-                              Save
-                            </button>
-                            <button className="btn-outline" style={{ color: '#6b7280', borderColor: '#6b7280', padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => setEditingRoomId(null)}>
-                              Cancel
-                            </button>
+                            <button className="btn-outline" style={{ color: '#10b981', borderColor: '#10b981', padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => handleSaveRoomEdit(room)}>Save</button>
+                            <button className="btn-outline" style={{ color: '#6b7280', borderColor: '#6b7280', padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => setEditingRoomId(null)}>Cancel</button>
                           </div>
                         ) : (
                           <div style={{ display: 'flex', gap: '5px' }}>
-                            <button className="btn-outline" style={{ color: '#1877f2', borderColor: '#1877f2', padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => handleEditRoom(room)}>
-                              Edit
-                            </button>
-                            <button className="btn-outline" style={{ color: '#dc2626', borderColor: '#dc2626', padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => handleDeleteRoom(room.id, room.name)}>
-                              Delete
-                            </button>
+                            <button className="btn-outline" style={{ color: '#1877f2', borderColor: '#1877f2', padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => handleEditRoom(room)}>Edit</button>
+                            <button className="btn-outline" style={{ color: '#dc2626', borderColor: '#dc2626', padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => handleDeleteRoom(room.id, room.name)}>Delete</button>
                           </div>
                         )}
                       </td>
@@ -414,90 +363,50 @@ export default function AdminHome() {
         </div>
       )}
 
-      {/* =========================================
-          VIEW: CREATE TEACHER
-      ========================================= */}
       {activeView === "create-teacher" && (
         <div className="card">
           <h3>Create Teacher Account</h3>
           <form onSubmit={(e) => handleCreateUser(e, "teacher")} style={{ display: 'flex', flexDirection: 'column', gap: '15px', maxWidth: '500px' }}>
-            
             <div style={{ display: 'flex', gap: '10px' }}>
-              <div style={{ flex: 2 }}>
-                <label style={{ fontWeight: '600', fontSize: '0.875rem' }}>First Name</label>
-                <input className="auth-input" type="text" name="firstName" value={formData.firstName} onChange={handleUserChange} required />
-              </div>
-              <div style={{ flex: 1 }}>
-                <label style={{ fontWeight: '600', fontSize: '0.875rem' }}>M.I.</label>
-                <input className="auth-input" type="text" name="middleInitial" placeholder="X" value={formData.middleInitial} onChange={handleUserChange} maxLength="1" />
-              </div>
+              <div style={{ flex: 2 }}><label style={{ fontWeight: '600', fontSize: '0.875rem' }}>First Name</label><input className="auth-input" type="text" name="firstName" value={formData.firstName} onChange={handleUserChange} required /></div>
+              <div style={{ flex: 1 }}><label style={{ fontWeight: '600', fontSize: '0.875rem' }}>M.I.</label><input className="auth-input" type="text" name="middleInitial" placeholder="X" value={formData.middleInitial} onChange={handleUserChange} maxLength="1" /></div>
             </div>
-
-            <label style={{ fontWeight: '600', fontSize: '0.875rem' }}>Last Name</label>
-            <input className="auth-input" type="text" name="lastName" value={formData.lastName} onChange={handleUserChange} required />
-
-            <label style={{ fontWeight: '600', fontSize: '0.875rem' }}>Email Address</label>
-            <input className="auth-input" type="email" name="email" value={formData.email} onChange={handleUserChange} required />
-
-            <label style={{ fontWeight: '600', fontSize: '0.875rem' }}>Assign Password</label>
-            <input className="auth-input" type="text" name="password" placeholder="Password" value={formData.password} onChange={handleUserChange} required />
-
+            <label style={{ fontWeight: '600', fontSize: '0.875rem' }}>Last Name</label><input className="auth-input" type="text" name="lastName" value={formData.lastName} onChange={handleUserChange} required />
+            <label style={{ fontWeight: '600', fontSize: '0.875rem' }}>Email Address</label><input className="auth-input" type="email" name="email" value={formData.email} onChange={handleUserChange} required />
+            <label style={{ fontWeight: '600', fontSize: '0.875rem' }}>Assign Password</label><input className="auth-input" type="text" name="password" placeholder="Password" value={formData.password} onChange={handleUserChange} required />
             <button className="btn-primary" type="submit" style={{ marginTop: '10px' }}>Create Teacher Profile</button>
           </form>
         </div>
       )}
 
-      {/* =========================================
-          VIEW: CREATE PARENT
-      ========================================= */}
       {activeView === "create-parent" && (
         <div className="card">
           <h3>Create Parent Account</h3>
           <form onSubmit={(e) => handleCreateUser(e, "parent")} style={{ display: 'flex', flexDirection: 'column', gap: '15px', maxWidth: '500px' }}>
-            
-            <label style={{ fontWeight: '600', fontSize: '0.875rem', color: '#1877f2', marginTop: '10px', borderBottom: '1px solid #e5e7eb', paddingBottom: '5px' }}>
-              Parent Information
-            </label>
+            <label style={{ fontWeight: '600', fontSize: '0.875rem', color: '#1877f2', marginTop: '10px', borderBottom: '1px solid #e5e7eb', paddingBottom: '5px' }}>Parent Information</label>
             <div style={{ display: 'flex', gap: '10px' }}>
-              <div style={{ flex: 2 }}>
-                <input className="auth-input" type="text" name="firstName" placeholder="First Name" value={formData.firstName} onChange={handleUserChange} required />
-              </div>
-              <div style={{ flex: 1 }}>
-                <input className="auth-input" type="text" name="middleInitial" placeholder="M.I." value={formData.middleInitial} onChange={handleUserChange} maxLength="1" />
-              </div>
+              <div style={{ flex: 2 }}><input className="auth-input" type="text" name="firstName" placeholder="First Name" value={formData.firstName} onChange={handleUserChange} required /></div>
+              <div style={{ flex: 1 }}><input className="auth-input" type="text" name="middleInitial" placeholder="M.I." value={formData.middleInitial} onChange={handleUserChange} maxLength="1" /></div>
             </div>
-
             <input className="auth-input" type="text" name="lastName" placeholder="Last Name" value={formData.lastName} onChange={handleUserChange} required />
             <input className="auth-input" type="email" name="email" placeholder="Email Address" value={formData.email} onChange={handleUserChange} required />
             <input className="auth-input" type="text" name="password" placeholder="Password" value={formData.password} onChange={handleUserChange} required />
 
-            <label style={{ fontWeight: '600', fontSize: '0.875rem', color: '#10b981', marginTop: '10px', borderBottom: '1px solid #e5e7eb', paddingBottom: '5px' }}>
-              Student Information (Auto-Registers Student)
-            </label>
+            <label style={{ fontWeight: '600', fontSize: '0.875rem', color: '#10b981', marginTop: '10px', borderBottom: '1px solid #e5e7eb', paddingBottom: '5px' }}>Student Information (Auto-Registers)</label>
             <div style={{ display: 'flex', gap: '10px' }}>
               <input className="auth-input" style={{ flex: 1 }} type="text" name="studentFirstName" placeholder="Student First Name" value={formData.studentFirstName} onChange={handleUserChange} required />
               <input className="auth-input" style={{ flex: 1 }} type="text" name="studentLastName" placeholder="Student Last Name" value={formData.studentLastName} onChange={handleUserChange} required />
             </div>
-
             <input className="auth-input" type="text" inputMode="numeric" pattern="\d*" name="studentLRN" placeholder="12-digit LRN" maxLength="12" value={formData.studentLRN} onChange={handleUserChange} required />
-            
             <select className="auth-input" name="assignedRoom" value={formData.assignedRoom} onChange={handleUserChange} required>
               <option value="">-- Assign Student to Room --</option>
-              {rooms.map(r => (
-                <option key={r.id} value={`Grade ${r.grade} - ${r.name}`}>
-                  Grade {r.grade} - {r.name}
-                </option>
-              ))}
+              {rooms.map(r => <option key={r.id} value={`Grade ${r.grade} - ${r.name}`}>Grade {r.grade} - {r.name}</option>)}
             </select>
-
             <button className="btn-primary" type="submit" style={{ marginTop: '15px' }}>Create Parent & Student Profile</button>
           </form>
         </div>
       )}
 
-      {/* =========================================
-          VIEW: MANAGE USERS 
-      ========================================= */}
       {activeView === "manage" && (
         <div className="card">
           <h3>Manage Users</h3>
@@ -520,7 +429,6 @@ export default function AdminHome() {
                     {[1, 2, 3, 4, 5, 6].map(g => <option key={g} value={g}>Grade {g}</option>)}
                   </select>
                 </div>
-
                 <div style={{ flex: '1', minWidth: '150px' }}>
                   <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Section</label>
                   <select className="auth-input" value={sectionFilter} onChange={(e) => { setSectionFilter(e.target.value); setCurrentPage(1); }} disabled={!gradeFilter}>
@@ -531,6 +439,29 @@ export default function AdminHome() {
               </>
             )}
           </div>
+
+          {/* User Edit Modal */}
+          {editingUser && (
+            <div style={{ marginBottom: "20px", padding: "15px", backgroundColor: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "6px" }}>
+              <h3 style={{ fontWeight: "bold", marginBottom: "10px" }}>Editing Room: {editingUser.fullName}</h3>
+              <form onSubmit={handleUpdateUserRoom} style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+                <select 
+                  value={newRoomAssignment} 
+                  onChange={(e) => setNewRoomAssignment(e.target.value)}
+                  style={{ padding: "8px", borderRadius: "4px", border: "1px solid #ccc", flex: 1, minWidth: "200px" }}
+                >
+                  <option value="">None (Leave Room / Unassign)</option>
+                  {rooms.map(room => (
+                    <option key={room.id} value={`Grade ${room.grade} - ${room.name}`}>
+                      Grade {room.grade} - {room.name}
+                    </option>
+                  ))}
+                </select>
+                <button type="submit" style={{ padding: "8px 16px", backgroundColor: "#3b82f6", color: "white", borderRadius: "4px", fontWeight: "bold", border: "none" }}>Save Changes</button>
+                <button type="button" onClick={() => setEditingUser(null)} style={{ padding: "8px 16px", backgroundColor: "#94a3b8", color: "white", borderRadius: "4px", border: "none" }}>Cancel</button>
+              </form>
+            </div>
+          )}
 
           <div className="table-responsive">
             <table>
@@ -550,9 +481,7 @@ export default function AdminHome() {
                 ) : (
                   currentDisplayedUsers.map(user => (
                     <tr key={user.id}>
-                      <td style={{ fontWeight: '600' }}>
-                        {user.lastName}, {user.firstName} {user.middleInitial ? user.middleInitial + '.' : ''}
-                      </td>
+                      <td style={{ fontWeight: '600' }}>{user.lastName}, {user.firstName} {user.middleInitial ? user.middleInitial + '.' : ''}</td>
                       <td>
                         <span className="badge" style={{ backgroundColor: user.role === 'teacher' ? '#dbeafe' : '#fef3c7', color: user.role === 'teacher' ? '#1e3a8a' : '#92400e' }}>
                           {user.role.toUpperCase()}
@@ -561,7 +490,10 @@ export default function AdminHome() {
                       <td style={{ color: '#4b5563', fontSize: '0.875rem' }}>{user.email}</td>
                       <td style={{ color: '#6b7280', fontSize: '0.875rem' }}>{user.assignedRoom || "Unassigned"}</td>
                       {roleFilter === "parent" && <td style={{ color: '#6b7280', fontSize: '0.875rem' }}>{user.studentLRN || "N/A"}</td>}
-                      <td>
+                      <td style={{ display: 'flex', gap: '5px' }}>
+                        <button className="btn-outline" style={{ color: '#1877f2', borderColor: '#1877f2', padding: '6px 12px', fontSize: '0.75rem' }} onClick={() => { setEditingUser(user); setNewRoomAssignment(user.assignedRoom || ""); }}>
+                          Edit Room
+                        </button>
                         <button className="btn-outline" style={{ color: '#dc2626', borderColor: '#dc2626', padding: '6px 12px', fontSize: '0.75rem' }} onClick={() => handleDeleteUser(user.id, user.fullName)}>
                           Delete
                         </button>
@@ -575,17 +507,9 @@ export default function AdminHome() {
 
           {totalItems > 0 && (
             <div className="pagination-controls" style={{ marginTop: '1.5rem' }}>
-              <button className="btn-outline" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>
-                Previous
-              </button>
-              
-              <span style={{ fontSize: '0.875rem', fontWeight: 'bold', color: '#374151' }}>
-                {Math.min(indexOfLastItem, totalItems)} / {totalItems}
-              </span>
-              
-              <button className="btn-outline" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>
-                Next
-              </button>
+              <button className="btn-outline" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>Previous</button>
+              <span style={{ fontSize: '0.875rem', fontWeight: 'bold', color: '#374151' }}>{Math.min(indexOfLastItem, totalItems)} / {totalItems}</span>
+              <button className="btn-outline" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>Next</button>
             </div>
           )}
         </div>

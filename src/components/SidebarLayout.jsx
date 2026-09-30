@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { db, auth } from "../firebase/firebase";
 import { collection, query, where, onSnapshot, doc, getDoc } from "firebase/firestore";
-import { onAuthStateChanged } from "firebase/auth";
+import { onAuthStateChanged, signOut } from "firebase/auth";
 
 // --- Clean SVG Icons ---
 const HomeIcon = () => (
@@ -16,21 +16,19 @@ const ChartIcon = () => (
 );
 
 export default function SidebarLayout({ children, role }) {
-  const [unreadCount, setUnreadCount] = useState(0);     // Attendance Badge
-  const [unreadGrades, setUnreadGrades] = useState(0);   // Grades Badge
-  const [globalToast, setGlobalToast] = useState({ text: "", show: false }); // Live Pop-up
+  const [unreadCount, setUnreadCount] = useState(0);    
+  const [unreadGrades, setUnreadGrades] = useState(0);   
+  const [globalToast, setGlobalToast] = useState({ text: "", show: false }); 
   
   const navigate = useNavigate();
   const location = useLocation();
   const locationRef = useRef(location.pathname);
 
-  // Trigger global pop-up notification
   const showLiveNotification = (message) => {
     setGlobalToast({ text: message, show: true });
     setTimeout(() => setGlobalToast({ text: "", show: false }), 4000);
   };
 
-  // Clear badges when visiting respective pages
   useEffect(() => {
     locationRef.current = location.pathname;
     if (location.pathname === "/parent/attendance") {
@@ -43,21 +41,19 @@ export default function SidebarLayout({ children, role }) {
     }
   }, [location.pathname]);
 
-  // Live Database Listeners for Notifications
   useEffect(() => {
-    if (role !== "parent") return;
     let unsubscribeAtt = null;
     let unsubscribeGrades = null;
 
     const setupNotificationListeners = async (user) => {
+      if (role !== "parent") return;
       try {
         const parentDoc = await getDoc(doc(db, "users", user.uid));
         if (parentDoc.exists() && parentDoc.data().studentLRN) {
           const parentLRN = parentDoc.data().studentLRN;
           
-          // --- 1. ATTENDANCE LISTENER ---
           const qAtt = query(collection(db, "attendance"), where("studentLRN", "==", parentLRN));
-          let initialLoadAtt = true; // Prevent pop-up spam on page load
+          let initialLoadAtt = true; 
           
           unsubscribeAtt = onSnapshot(qAtt, (snapshot) => {
             let newUnread = 0;
@@ -68,7 +64,6 @@ export default function SidebarLayout({ children, role }) {
               if (change.type === "added") {
                 const docData = change.doc.data();
                 const recordTime = docData.timestamp?.seconds ? docData.timestamp.seconds * 1000 : Date.now();
-                
                 if (recordTime > lastChecked && locationRef.current !== "/parent/attendance") {
                   newUnread++;
                   showLiveToast = true;
@@ -78,11 +73,9 @@ export default function SidebarLayout({ children, role }) {
 
             if (newUnread > 0) setUnreadCount((prev) => prev + newUnread);
             if (showLiveToast && !initialLoadAtt) showLiveNotification("🔔 New Attendance Recorded!");
-            
             initialLoadAtt = false;
           });
 
-          // --- 2. GRADES LISTENER ---
           const qGrades = query(collection(db, "grades"), where("studentLRN", "==", parentLRN));
           let initialLoadGrades = true;
 
@@ -95,7 +88,6 @@ export default function SidebarLayout({ children, role }) {
               if (change.type === "added") {
                 const docData = change.doc.data();
                 const recordTime = docData.timestamp?.seconds ? docData.timestamp.seconds * 1000 : Date.now();
-                
                 if (recordTime > lastChecked && locationRef.current !== "/parent/grades") {
                   newUnread++;
                   showLiveToast = true;
@@ -105,7 +97,6 @@ export default function SidebarLayout({ children, role }) {
 
             if (newUnread > 0) setUnreadGrades((prev) => prev + newUnread);
             if (showLiveToast && !initialLoadGrades) showLiveNotification("📊 Academic Grade Updated!");
-            
             initialLoadGrades = false;
           });
         }
@@ -114,8 +105,13 @@ export default function SidebarLayout({ children, role }) {
       }
     };
 
+    // Auto-eject logged-out users to strictly enforce session lock
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      if (user) setupNotificationListeners(user);
+      if (user) {
+        setupNotificationListeners(user);
+      } else {
+        navigate("/login", { replace: true });
+      }
     });
 
     return () => {
@@ -123,22 +119,25 @@ export default function SidebarLayout({ children, role }) {
       if (unsubscribeAtt) unsubscribeAtt();
       if (unsubscribeGrades) unsubscribeGrades();
     };
-  }, [role]); 
+  }, [role, navigate]); 
 
-  const handleLogout = () => {
-    localStorage.clear();
-    navigate("/login");
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      localStorage.clear();
+      navigate("/login", { replace: true });
+    } catch (err) {
+      console.error("Logout Error: ", err);
+    }
   };
 
   return (
     <div className="app-shell">
       <style>{`
-        /* Global Live Pop-up styling */
         .live-toast { position: fixed; top: 80px; left: 50%; transform: translateX(-50%) translateY(-150%); opacity: 0; background: #ffffff; color: #111827; padding: 14px 24px; border-radius: 50px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); z-index: 10000; font-weight: 600; font-size: 0.95rem; display: flex; align-items: center; gap: 10px; transition: all 0.5s cubic-bezier(0.18, 0.89, 0.32, 1.28); border: 2px solid #1877f2; }
         .live-toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
       `}</style>
 
-      {/* The Global Pop-up UI */}
       <div className={`live-toast ${globalToast.show ? 'show' : ''}`}>
         {globalToast.text}
       </div>
@@ -162,20 +161,14 @@ export default function SidebarLayout({ children, role }) {
                 <HomeIcon />
               </Link>
               
-              {/* Attendance Tab with Badge */}
               <Link to="/parent/attendance" className={`tab-item ${location.pathname === "/parent/attendance" ? "active" : ""}`}>
                 <BellIcon />
-                {unreadCount > 0 && (
-                  <span className="notification-badge">{unreadCount}</span>
-                )}
+                {unreadCount > 0 && <span className="notification-badge">{unreadCount}</span>}
               </Link>
 
-              {/* Grades Tab with new Badge */}
               <Link to="/parent/grades" className={`tab-item ${location.pathname === "/parent/grades" ? "active" : ""}`}>
                 <ChartIcon />
-                {unreadGrades > 0 && (
-                  <span className="notification-badge" style={{ backgroundColor: '#ef4444' }}>{unreadGrades}</span>
-                )}
+                {unreadGrades > 0 && <span className="notification-badge" style={{ backgroundColor: '#ef4444' }}>{unreadGrades}</span>}
               </Link>
             </>
           )}

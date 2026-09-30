@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { auth, db } from "../../firebase/firebase";
-import { signInWithEmailAndPassword } from "firebase/auth";
+import { signInWithEmailAndPassword, onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 
 export default function Login() {
@@ -9,35 +9,43 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  
-  // PWA Install Prompt State
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Listen for Chrome's signal that the app can be installed
+    // Lock the session: If already logged in, redirect and replace history so "Back" doesn't work
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        const userDoc = await getDoc(doc(db, "users", user.uid));
+        if (userDoc.exists()) {
+          const role = userDoc.data().role;
+          if (role === "teacher") navigate("/teacher/home", { replace: true });
+          else if (role === "parent") navigate("/parent/home", { replace: true });
+          else navigate("/admin/home", { replace: true }); 
+        } else {
+          navigate("/admin/home", { replace: true });
+        }
+      }
+    });
+
     const handleBeforeInstallPrompt = (e) => {
       e.preventDefault(); 
       setDeferredPrompt(e); 
     };
-
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
 
     return () => {
+      unsubscribe();
       window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
     };
-  }, []);
+  }, [navigate]);
 
   const handleInstallApp = async () => {
     if (!deferredPrompt) return;
-    
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
-    
-    if (outcome === "accepted") {
-      setDeferredPrompt(null); 
-    }
+    if (outcome === "accepted") setDeferredPrompt(null); 
   };
 
   const handleLogin = async (e) => {
@@ -46,26 +54,14 @@ export default function Login() {
     setLoading(true);
 
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
-
-      // Check the database for specific Teacher/Parent roles
-      const userDoc = await getDoc(doc(db, "users", user.uid));
-      
-      if (userDoc.exists()) {
-        const role = userDoc.data().role;
-        if (role === "teacher") navigate("/teacher/home");
-        else if (role === "parent") navigate("/parent/home");
-        else navigate("/admin/home"); 
-      } else {
-        // FIX: If the user passes Firebase Auth but has no database document, 
-        // they are the master Admin. Route them to the admin panel.
-        navigate("/admin/home");
-      }
+      const cleanedEmail = email.trim();
+      // Notice we do not navigate here anymore; the onAuthStateChanged listener above handles it automatically
+      await signInWithEmailAndPassword(auth, cleanedEmail, password);
     } catch (err) {
-      setError("Invalid email or password.");
+      console.error("Login Error:", err);
+      setError(`Firebase Error: ${err.code || "Failed to sign in"}`);
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
@@ -73,7 +69,6 @@ export default function Login() {
       <div className="auth-card">
         <h2 className="auth-title">Welcome to Smart PTA</h2>
         
-        {/* The Native "Download App" Button */}
         {deferredPrompt && (
           <div style={{ marginBottom: '1.5rem', padding: '1rem', backgroundColor: '#eff6ff', borderRadius: '8px', border: '1px solid #bfdbfe', textAlign: 'center' }}>
             <p style={{ margin: '0 0 10px 0', fontSize: '0.875rem', color: '#1e3a8a', fontWeight: '600' }}>
@@ -89,7 +84,7 @@ export default function Login() {
           </div>
         )}
 
-        {error && <div style={{ color: "#dc2626", marginBottom: "1rem", textAlign: "center", fontWeight: "500" }}>{error}</div>}
+        {error && <div style={{ color: "#dc2626", marginBottom: "1rem", textAlign: "center", fontWeight: "500", fontSize: "0.9rem", wordWrap: "break-word" }}>{error}</div>}
         
         <form className="auth-form" onSubmit={handleLogin}>
           <input
