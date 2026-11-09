@@ -14,8 +14,8 @@ export const firebaseConfig = {
   measurementId: "G-C3BZ4X7413"
 };
 
-// Initialize Firebase App
-const app = initializeApp(firebaseConfig);
+// FIX: Added 'export' here so pushService.js can import it properly
+export const app = initializeApp(firebaseConfig);
 
 // Initialize Firebase Services
 export const auth = getAuth(app);
