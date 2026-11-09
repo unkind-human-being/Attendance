@@ -1,10 +1,11 @@
+// src/components/SidebarLayout.jsx
 import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { db, auth } from "../firebase/firebase";
 import { collection, query, where, onSnapshot, doc, getDoc } from "firebase/firestore";
 import { onAuthStateChanged, signOut } from "firebase/auth";
+import { requestNotificationPermission } from "../services/pushService"; // NEW IMPORT
 
-// --- Clean SVG Icons ---
 const HomeIcon = () => (
   <svg viewBox="0 0 24 24" className="tab-icon"><path d="M11.47 3.84a.75.75 0 011.06 0l8.69 8.69a.75.75 0 101.06-1.06l-8.689-8.69a2.25 2.25 0 00-3.182 0l-8.69 8.69a.75.75 0 001.061 1.06l8.69-8.69z" /><path d="M12 5.432l8.159 8.159c.03.03.04.07.04.114v8.045a2.25 2.25 0 01-2.25 2.25h-3.45a.75.75 0 01-.75-.75v-4.875a.375.375 0 00-.375-.375H10.59a.375.375 0 00-.375.375v4.875a.75.75 0 01-.75.75H5.805a2.25 2.25 0 01-2.25-2.25v-8.045c0-.045.01-.084.04-.114L12 5.432z" /></svg>
 );
@@ -105,10 +106,10 @@ export default function SidebarLayout({ children, role }) {
       }
     };
 
-    // Auto-eject logged-out users to strictly enforce session lock
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       if (user) {
         setupNotificationListeners(user);
+        requestNotificationPermission(user.uid); // NEW: Request token on login
       } else {
         navigate("/login", { replace: true });
       }
