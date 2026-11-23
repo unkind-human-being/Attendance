@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { auth, db } from "../../firebase/firebase";
-import { signInWithEmailAndPassword, onAuthStateChanged } from "firebase/auth";
+import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 
 const EyeOpenIcon = () => (
@@ -31,14 +31,33 @@ export default function Login() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        const userDoc = await getDoc(doc(db, "users", user.uid));
-        if (userDoc.exists()) {
-          const role = userDoc.data().role;
-          if (role === "teacher") navigate("/teacher/home", { replace: true });
-          else if (role === "parent") navigate("/parent/home", { replace: true });
-          else navigate("/admin/home", { replace: true });
-        } else {
-          navigate("/admin/home", { replace: true });
+        try {
+          const userDoc = await getDoc(doc(db, "users", user.uid));
+
+          if (userDoc.exists()) {
+            const role = userDoc.data().role;
+            if (role === "teacher") {
+              navigate("/teacher/home", { replace: true });
+            } else if (role === "parent") {
+              navigate("/parent/home", { replace: true });
+            } else if (role === "admin") {
+              navigate("/admin/home", { replace: true });
+            } else {
+              await signOut(auth);
+              setError("Account role is invalid. Contact your school administrator.");
+              setLoading(false);
+            }
+          } else {
+            // SECURITY FIX: Never route missing/deleted accounts to Admin
+            await signOut(auth);
+            setError("Account not found or has been deleted. Contact your school administrator.");
+            setLoading(false);
+          }
+        } catch (err) {
+          console.error("Role check error:", err);
+          await signOut(auth);
+          setError("Unable to verify account permissions.");
+          setLoading(false);
         }
       }
     });

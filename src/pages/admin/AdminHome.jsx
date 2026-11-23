@@ -48,6 +48,7 @@ export default function AdminHome() {
   const [newRoomAssignment, setNewRoomAssignment] = useState("");
   const [newUserPassword, setNewUserPassword] = useState("");
   const [savingUserEdit, setSavingUserEdit] = useState(false);
+  const [deletingUserId, setDeletingUserId] = useState(null);
 
   const [roleFilter, setRoleFilter] = useState("teacher");
   const [gradeFilter, setGradeFilter] = useState("");
@@ -181,12 +182,10 @@ export default function AdminHome() {
         if (editingUser.role === "teacher") {
           const targetRoom = rooms.find((r) => `Grade ${r.grade} - ${r.name}` === newRoomAssignment);
 
-          // Enforce strict 1-teacher-per-room rule
           if (targetRoom && targetRoom.assignedTeacherId && targetRoom.assignedTeacherId !== editingUser.id) {
             throw new Error("That room already has an assigned adviser.");
           }
 
-          // Clear teacher from their old room (if they had one)
           const oldRoom = rooms.find((r) => r.assignedTeacherId === editingUser.id);
           if (oldRoom) {
             await updateDoc(doc(db, "rooms", oldRoom.id), {
@@ -195,7 +194,6 @@ export default function AdminHome() {
             });
           }
 
-          // Assign teacher to the new room
           if (targetRoom) {
             await updateDoc(doc(db, "rooms", targetRoom.id), {
               assignedTeacherId: editingUser.id,
@@ -208,7 +206,6 @@ export default function AdminHome() {
           assignedRoom: newRoomAssignment,
         });
 
-        // Sync linked Student record if Parent
         if (editingUser.role === "parent" && editingUser.studentLRN) {
           const studentQuery = query(collection(db, "students"), where("lrn", "==", editingUser.studentLRN));
           const studentSnapshot = await getDocs(studentQuery);
@@ -233,25 +230,44 @@ export default function AdminHome() {
     }
   };
 
+  // --- COMPLETE DELETE (FIREBASE AUTH + FIRESTORE + LINKED RECORDS) ---
   const handleDeleteUser = async (userId, name) => {
-    if (window.confirm(`Are you sure you want to delete ${name}'s account?`)) {
-      try {
-        // Free up any room if deleting an assigned teacher
-        const teacherRoom = rooms.find((r) => r.assignedTeacherId === userId);
-        if (teacherRoom) {
-          await updateDoc(doc(db, "rooms", teacherRoom.id), {
-            assignedTeacherId: "",
-            assignedTeacherName: "Unassigned",
-          });
-        }
+    if (!window.confirm(`Are you sure you want to permanently delete ${name}'s account? They will no longer be able to log in.`)) {
+      return;
+    }
 
-        await deleteDoc(doc(db, "users", userId));
-        showMessage("User deleted successfully.");
-        fetchUsers();
-        fetchRooms();
-      } catch (error) {
-        showMessage("Failed to delete user.", "error");
+    setDeletingUserId(userId);
+    try {
+      const currentAdmin = auth.currentUser;
+      if (!currentAdmin) throw new Error("Admin session expired. Please log in again.");
+
+      const idToken = await currentAdmin.getIdToken();
+      const res = await fetch("/api/delete-user", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ uid: userId }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to delete user.");
       }
+
+      if (editingUser?.id === userId) {
+        setEditingUser(null);
+      }
+
+      showMessage("User permanently deleted from Auth and Database.");
+      fetchUsers();
+      fetchRooms();
+    } catch (error) {
+      console.error("Delete User Error:", error);
+      showMessage(error.message || "Failed to delete user.", "error");
+    } finally {
+      setDeletingUserId(null);
     }
   };
 
@@ -262,7 +278,6 @@ export default function AdminHome() {
     try {
       const assignedTeacher = users.find((u) => u.id === roomForm.assignedTeacherId);
 
-      // Double-check strict 1-teacher-per-room rule
       if (assignedTeacher && isTeacherAssigned(assignedTeacher)) {
         showMessage("This teacher is already assigned to another room.", "error");
         return;
@@ -298,7 +313,6 @@ export default function AdminHome() {
     try {
       const newTeacher = users.find((u) => u.id === editTeacherId);
 
-      // Double-check strict 1-teacher-per-room rule
       if (newTeacher && editTeacherId !== room.assignedTeacherId && isTeacherAssigned(newTeacher)) {
         showMessage("This teacher is already assigned to another room.", "error");
         return;
@@ -359,7 +373,6 @@ export default function AdminHome() {
   const currentDisplayedUsers = filteredUsers.slice(indexOfFirstItem, indexOfLastItem);
   const availableSections = gradeFilter ? rooms.filter((r) => r.grade.toString() === gradeFilter) : rooms;
 
-  // Rooms available in Manage Users -> Edit dropdown
   const availableRoomsForEdit = editingUser
     ? editingUser.role === "teacher"
       ? rooms.filter((r) => !r.assignedTeacherId || r.assignedTeacherId === editingUser.id)
@@ -621,7 +634,7 @@ export default function AdminHome() {
       )}
 
       {/* =========================================
-          VIEW: MANAGE USERS (EDIT ROOM + CHANGE PASSWORD)
+          VIEW: MANAGE USERS (EDIT + COMPLETE DELETE)
       ========================================= */}
       {activeView === "manage" && (
         <div className="card">
@@ -771,10 +784,11 @@ export default function AdminHome() {
                         </button>
                         <button
                           className="btn-outline"
+                          disabled={deletingUserId === user.id}
                           style={{ color: "#dc2626", borderColor: "#dc2626", padding: "6px 12px", fontSize: "0.75rem" }}
                           onClick={() => handleDeleteUser(user.id, user.fullName)}
                         >
-                          Delete
+                          {deletingUserId === user.id ? "Deleting..." : "Delete"}
                         </button>
                       </td>
                     </tr>
