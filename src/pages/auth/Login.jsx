@@ -4,17 +4,31 @@ import { auth, db } from "../../firebase/firebase";
 import { signInWithEmailAndPassword, onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 
+const EyeOpenIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+);
+
+const EyeClosedIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+    <line x1="1" y1="1" x2="23" y2="23" />
+  </svg>
+);
+
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState(null);
-  
+
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Lock the session: If already logged in, redirect and replace history so "Back" doesn't work
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         const userDoc = await getDoc(doc(db, "users", user.uid));
@@ -22,7 +36,7 @@ export default function Login() {
           const role = userDoc.data().role;
           if (role === "teacher") navigate("/teacher/home", { replace: true });
           else if (role === "parent") navigate("/parent/home", { replace: true });
-          else navigate("/admin/home", { replace: true }); 
+          else navigate("/admin/home", { replace: true });
         } else {
           navigate("/admin/home", { replace: true });
         }
@@ -30,8 +44,8 @@ export default function Login() {
     });
 
     const handleBeforeInstallPrompt = (e) => {
-      e.preventDefault(); 
-      setDeferredPrompt(e); 
+      e.preventDefault();
+      setDeferredPrompt(e);
     };
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
 
@@ -45,7 +59,7 @@ export default function Login() {
     if (!deferredPrompt) return;
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === "accepted") setDeferredPrompt(null); 
+    if (outcome === "accepted") setDeferredPrompt(null);
   };
 
   const handleLogin = async (e) => {
@@ -55,7 +69,6 @@ export default function Login() {
 
     try {
       const cleanedEmail = email.trim();
-      // Notice we do not navigate here anymore; the onAuthStateChanged listener above handles it automatically
       await signInWithEmailAndPassword(auth, cleanedEmail, password);
     } catch (err) {
       console.error("Login Error:", err);
@@ -68,24 +81,28 @@ export default function Login() {
     <div className="auth-wrapper">
       <div className="auth-card">
         <h2 className="auth-title">Welcome to Smart PTA</h2>
-        
+
         {deferredPrompt && (
-          <div style={{ marginBottom: '1.5rem', padding: '1rem', backgroundColor: '#eff6ff', borderRadius: '8px', border: '1px solid #bfdbfe', textAlign: 'center' }}>
-            <p style={{ margin: '0 0 10px 0', fontSize: '0.875rem', color: '#1e3a8a', fontWeight: '600' }}>
+          <div style={{ marginBottom: "1.5rem", padding: "1rem", backgroundColor: "#eff6ff", borderRadius: "8px", border: "1px solid #bfdbfe", textAlign: "center" }}>
+            <p style={{ margin: "0 0 10px 0", fontSize: "0.875rem", color: "#1e3a8a", fontWeight: "600" }}>
               For the best experience, install our native app:
             </p>
-            <button 
-              onClick={handleInstallApp} 
-              className="btn-primary" 
-              style={{ width: '100%', backgroundColor: '#10b981', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+            <button
+              onClick={handleInstallApp}
+              className="btn-primary"
+              style={{ width: "100%", backgroundColor: "#10b981", fontWeight: "bold", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}
             >
-               Download App
+              Download App
             </button>
           </div>
         )}
 
-        {error && <div style={{ color: "#dc2626", marginBottom: "1rem", textAlign: "center", fontWeight: "500", fontSize: "0.9rem", wordWrap: "break-word" }}>{error}</div>}
-        
+        {error && (
+          <div style={{ color: "#dc2626", marginBottom: "1rem", textAlign: "center", fontWeight: "500", fontSize: "0.9rem", wordWrap: "break-word" }}>
+            {error}
+          </div>
+        )}
+
         <form className="auth-form" onSubmit={handleLogin}>
           <input
             type="email"
@@ -95,19 +112,44 @@ export default function Login() {
             onChange={(e) => setEmail(e.target.value)}
             required
           />
-          <input
-            type="password"
-            placeholder="Password"
-            className="auth-input"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
+
+          <div style={{ position: "relative", width: "100%" }}>
+            <input
+              type={showPassword ? "text" : "password"}
+              placeholder="Password"
+              className="auth-input"
+              style={{ width: "100%", paddingRight: "42px", boxSizing: "border-box" }}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((prev) => !prev)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              style={{
+                position: "absolute",
+                right: "10px",
+                top: "50%",
+                transform: "translateY(-50%)",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: "4px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {showPassword ? <EyeOpenIcon /> : <EyeClosedIcon />}
+            </button>
+          </div>
+
           <button type="submit" className="auth-button" disabled={loading}>
             {loading ? "Signing In..." : "Sign In"}
           </button>
         </form>
-        
+
         <p style={{ marginTop: "1.5rem", textAlign: "center", fontSize: "0.875rem", color: "#6b7280" }}>
           Contact your school administrator for account credentials.
         </p>
