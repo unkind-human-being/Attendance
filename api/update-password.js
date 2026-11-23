@@ -1,13 +1,29 @@
 import admin from "firebase-admin";
 
-if (!admin.apps.length) {
+function initFirebaseAdmin() {
+  if (admin.apps.length) return;
+
+  const projectId = process.env.FIREBASE_PROJECT_ID?.replace(/^"|"$/g, "").trim();
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.replace(/^"|"$/g, "").trim();
+  const rawPrivateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+  if (!projectId || !clientEmail || !rawPrivateKey) {
+    throw new Error(
+      `Missing Vercel Environment Variables: ${!projectId ? "FIREBASE_PROJECT_ID " : ""}${!clientEmail ? "FIREBASE_CLIENT_EMAIL " : ""}${!rawPrivateKey ? "FIREBASE_PRIVATE_KEY" : ""}`.trim()
+    );
+  }
+
+  const privateKey = rawPrivateKey
+    .trim()
+    .replace(/,$/, "")
+    .replace(/^"|"$/g, "")
+    .replace(/\\n/g, "\n");
+
   admin.initializeApp({
     credential: admin.credential.cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY
-        ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n")
-        : undefined,
+      projectId,
+      clientEmail,
+      privateKey,
     }),
   });
 }
@@ -18,7 +34,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 1. Verify the requester is a logged-in Admin
+    initFirebaseAdmin();
+
     const authHeader = req.headers.authorization || "";
     const idToken = authHeader.startsWith("Bearer ") ? authHeader.split("Bearer ")[1] : null;
 
@@ -33,8 +50,7 @@ export default async function handler(req, res) {
       return res.status(403).json({ error: "Forbidden: Admin access required." });
     }
 
-    // 2. Validate payload
-    const { uid, newPassword } = req.body;
+    const { uid, newPassword } = req.body || {};
 
     if (!uid || !newPassword) {
       return res.status(400).json({ error: "Missing user ID or new password." });
@@ -44,7 +60,6 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Password must be at least 6 characters long." });
     }
 
-    // 3. Update the real password in Firebase Authentication
     await admin.auth().updateUser(uid, { password: newPassword });
 
     return res.status(200).json({ success: true, message: "Password updated in Firebase Auth." });

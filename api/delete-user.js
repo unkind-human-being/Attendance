@@ -1,13 +1,30 @@
 import admin from "firebase-admin";
 
-if (!admin.apps.length) {
+function initFirebaseAdmin() {
+  if (admin.apps.length) return;
+
+  const projectId = process.env.FIREBASE_PROJECT_ID?.replace(/^"|"$/g, "").trim();
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.replace(/^"|"$/g, "").trim();
+  const rawPrivateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+  if (!projectId || !clientEmail || !rawPrivateKey) {
+    throw new Error(
+      `Missing Vercel Environment Variables: ${!projectId ? "FIREBASE_PROJECT_ID " : ""}${!clientEmail ? "FIREBASE_CLIENT_EMAIL " : ""}${!rawPrivateKey ? "FIREBASE_PRIVATE_KEY" : ""}`.trim()
+    );
+  }
+
+  // Strip accidental surrounding quotes/trailing comma from JSON copy-paste and fix newlines
+  const privateKey = rawPrivateKey
+    .trim()
+    .replace(/,$/, "")
+    .replace(/^"|"$/g, "")
+    .replace(/\\n/g, "\n");
+
   admin.initializeApp({
     credential: admin.credential.cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY
-        ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n")
-        : undefined,
+      projectId,
+      clientEmail,
+      privateKey,
     }),
   });
 }
@@ -18,6 +35,8 @@ export default async function handler(req, res) {
   }
 
   try {
+    initFirebaseAdmin();
+
     // 1. Verify the requester is a logged-in Admin
     const authHeader = req.headers.authorization || "";
     const idToken = authHeader.startsWith("Bearer ") ? authHeader.split("Bearer ")[1] : null;
@@ -34,7 +53,7 @@ export default async function handler(req, res) {
     }
 
     // 2. Validate target UID
-    const { uid } = req.body;
+    const { uid } = req.body || {};
     if (!uid) {
       return res.status(400).json({ error: "Missing user ID." });
     }
@@ -47,28 +66,27 @@ export default async function handler(req, res) {
     const userRef = db.collection("users").doc(uid);
     const userSnap = await userRef.get();
 
-    // 3. Clean up related Firestore data (Rooms for Teachers, Students for Parents)
+    // 3. Clean up related Firestore data
     if (userSnap.exists) {
       const userData = userSnap.data();
 
       if (userData.role === "teacher") {
         const roomsSnap = await db.collection("rooms").where("assignedTeacherId", "==", uid).get();
-        const roomUpdates = roomsSnap.docs.map((roomDoc) =>
-          roomDoc.ref.update({
-            assignedTeacherId: "",
-            assignedTeacherName: "Unassigned",
-          })
+        await Promise.all(
+          roomsSnap.docs.map((roomDoc) =>
+            roomDoc.ref.update({
+              assignedTeacherId: "",
+              assignedTeacherName: "Unassigned",
+            })
+          )
         );
-        await Promise.all(roomUpdates);
       }
 
       if (userData.role === "parent") {
-        const studentsByParent = await db.collection("students").where("parentUid", "==", uid).get();
-        const deletePromises = studentsByParent.docs.map((studentDoc) => studentDoc.ref.delete());
-        await Promise.all(deletePromises);
+        const studentsSnap = await db.collection("students").where("parentUid", "==", uid).get();
+        await Promise.all(studentsSnap.docs.map((studentDoc) => studentDoc.ref.delete()));
       }
 
-      // Delete the Firestore user profile
       await userRef.delete();
     }
 
@@ -76,7 +94,6 @@ export default async function handler(req, res) {
     try {
       await admin.auth().deleteUser(uid);
     } catch (authErr) {
-      // Ignore if already removed from Firebase Auth so Firestore cleanup still succeeds
       if (authErr.code !== "auth/user-not-found") {
         throw authErr;
       }
