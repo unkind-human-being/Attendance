@@ -230,7 +230,7 @@ export default function AdminHome() {
     }
   };
 
-  // --- COMPLETE DELETE (FIREBASE AUTH + FIRESTORE + LINKED RECORDS) ---
+  // --- COMPLETE DELETE USER (FIREBASE AUTH + FIRESTORE + LINKED RECORDS) ---
   const handleDeleteUser = async (userId, name) => {
     if (!window.confirm(`Are you sure you want to permanently delete ${name}'s account? They will no longer be able to log in.`)) {
       return;
@@ -273,27 +273,47 @@ export default function AdminHome() {
 
   const handleRoomChange = (e) => setRoomForm({ ...roomForm, [e.target.name]: e.target.value });
 
+  // --- CREATE ROOM (ADVISER STRICTLY REQUIRED) ---
   const handleCreateRoom = async (e) => {
     e.preventDefault();
+
+    const availableTeachers = getUnassignedTeachers();
+
+    if (availableTeachers.length === 0) {
+      showMessage("No available adviser. Please create a teacher account first.", "error");
+      return;
+    }
+
+    if (!roomForm.assignedTeacherId) {
+      showMessage("Please assign an adviser or create a teacher account before creating a room.", "error");
+      return;
+    }
+
     try {
       const assignedTeacher = users.find((u) => u.id === roomForm.assignedTeacherId);
 
-      if (assignedTeacher && isTeacherAssigned(assignedTeacher)) {
+      if (!assignedTeacher) {
+        showMessage("Selected adviser not found. Please assign a valid adviser.", "error");
+        return;
+      }
+
+      if (isTeacherAssigned(assignedTeacher)) {
         showMessage("This teacher is already assigned to another room.", "error");
         return;
       }
 
-      const teacherName = assignedTeacher ? `${assignedTeacher.firstName} ${assignedTeacher.lastName}` : "Unassigned";
+      const teacherName = `${assignedTeacher.firstName} ${assignedTeacher.lastName}`;
       const newRoomName = `Grade ${roomForm.grade} - ${roomForm.section}`;
 
       await addDoc(collection(db, "rooms"), {
-        grade: roomForm.grade, name: roomForm.section, assignedTeacherId: roomForm.assignedTeacherId || "",
-        assignedTeacherName: teacherName, createdBy: "Admin"
+        grade: roomForm.grade,
+        name: roomForm.section,
+        assignedTeacherId: roomForm.assignedTeacherId,
+        assignedTeacherName: teacherName,
+        createdBy: "Admin"
       });
 
-      if (roomForm.assignedTeacherId) {
-        await updateDoc(doc(db, "users", roomForm.assignedTeacherId), { assignedRoom: newRoomName });
-      }
+      await updateDoc(doc(db, "users", roomForm.assignedTeacherId), { assignedRoom: newRoomName });
 
       showMessage(`${newRoomName} created successfully!`);
       setRoomForm({ grade: "1", section: "", assignedTeacherId: "" });
@@ -309,26 +329,38 @@ export default function AdminHome() {
     setEditTeacherId(room.assignedTeacherId || "");
   };
 
+  // --- EDIT ROOM (NO UNASSIGN ALLOWED) ---
   const handleSaveRoomEdit = async (room) => {
+    if (!editTeacherId) {
+      showMessage("A room must have an assigned adviser.", "error");
+      return;
+    }
+
     try {
       const newTeacher = users.find((u) => u.id === editTeacherId);
 
-      if (newTeacher && editTeacherId !== room.assignedTeacherId && isTeacherAssigned(newTeacher)) {
+      if (!newTeacher) {
+        showMessage("Please select a valid adviser.", "error");
+        return;
+      }
+
+      if (editTeacherId !== room.assignedTeacherId && isTeacherAssigned(newTeacher)) {
         showMessage("This teacher is already assigned to another room.", "error");
         return;
       }
 
-      const teacherName = newTeacher ? `${newTeacher.firstName} ${newTeacher.lastName}` : "Unassigned";
+      const teacherName = `${newTeacher.firstName} ${newTeacher.lastName}`;
       const fullRoomName = `Grade ${room.grade} - ${room.name}`;
 
-      await updateDoc(doc(db, "rooms", room.id), { assignedTeacherId: editTeacherId || "", assignedTeacherName: teacherName });
+      await updateDoc(doc(db, "rooms", room.id), {
+        assignedTeacherId: editTeacherId,
+        assignedTeacherName: teacherName
+      });
 
       if (room.assignedTeacherId && room.assignedTeacherId !== editTeacherId) {
         await updateDoc(doc(db, "users", room.assignedTeacherId), { assignedRoom: "" });
       }
-      if (editTeacherId) {
-        await updateDoc(doc(db, "users", editTeacherId), { assignedRoom: fullRoomName });
-      }
+      await updateDoc(doc(db, "users", editTeacherId), { assignedRoom: fullRoomName });
 
       showMessage("Room updated successfully!");
       setEditingRoomId(null);
@@ -339,19 +371,37 @@ export default function AdminHome() {
     }
   };
 
-  const handleDeleteRoom = async (roomId, name) => {
-    if (window.confirm(`Are you sure you want to delete the room ${name}?`)) {
+  // --- COMPLETE DELETE ROOM (FREES TEACHER + CLEARS LINKED PARENTS & STUDENTS) ---
+  const handleDeleteRoom = async (roomId, room) => {
+    const fullRoomName = `Grade ${room.grade} - ${room.name}`;
+    if (window.confirm(`Are you sure you want to delete ${fullRoomName}?`)) {
       try {
-        const roomToDelete = rooms.find((r) => r.id === roomId);
-        if (roomToDelete?.assignedTeacherId) {
-          await updateDoc(doc(db, "users", roomToDelete.assignedTeacherId), { assignedRoom: "" });
+        // 1. Free the assigned teacher
+        if (room.assignedTeacherId) {
+          await updateDoc(doc(db, "users", room.assignedTeacherId), { assignedRoom: "" });
         }
 
+        // 2. Clear assignedRoom on any users (parents/teachers) referencing this room
+        const usersInRoomQuery = query(collection(db, "users"), where("assignedRoom", "==", fullRoomName));
+        const usersInRoomSnap = await getDocs(usersInRoomQuery);
+        for (const userDoc of usersInRoomSnap.docs) {
+          await updateDoc(doc(db, "users", userDoc.id), { assignedRoom: "" });
+        }
+
+        // 3. Clear room on any students referencing this room
+        const studentsInRoomQuery = query(collection(db, "students"), where("room", "==", fullRoomName));
+        const studentsInRoomSnap = await getDocs(studentsInRoomQuery);
+        for (const studentDoc of studentsInRoomSnap.docs) {
+          await updateDoc(doc(db, "students", studentDoc.id), { room: "" });
+        }
+
+        // 4. Delete the room document
         await deleteDoc(doc(db, "rooms", roomId));
-        showMessage("Room deleted successfully.");
+        showMessage(`${fullRoomName} deleted successfully.`);
         fetchRooms();
         fetchUsers();
       } catch (error) {
+        console.error("Delete Room Error:", error);
         showMessage("Failed to delete room.", "error");
       }
     }
@@ -372,6 +422,8 @@ export default function AdminHome() {
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
   const currentDisplayedUsers = filteredUsers.slice(indexOfFirstItem, indexOfLastItem);
   const availableSections = gradeFilter ? rooms.filter((r) => r.grade.toString() === gradeFilter) : rooms;
+
+  const unassignedTeachers = getUnassignedTeachers();
 
   const availableRoomsForEdit = editingUser
     ? editingUser.role === "teacher"
@@ -437,12 +489,12 @@ export default function AdminHome() {
       </div>
 
       {/* =========================================
-          VIEW: CREATE ROOM (STRICT 1 TEACHER PER ROOM)
+          VIEW: CREATE ROOM (ADVISER REQUIRED, 1 TEACHER PER ROOM)
       ========================================= */}
       {activeView === "create-room" && (
         <div className="card">
           <h3>Create New Room</h3>
-          <p className="subtext">Create class sections and optionally assign an available teacher (1 adviser per room).</p>
+          <p className="subtext">Create class sections and assign an available teacher (required, 1 adviser per room).</p>
           <form onSubmit={handleCreateRoom} style={{ display: "flex", flexDirection: "column", gap: "15px", maxWidth: "500px" }}>
 
             <label style={{ fontWeight: "600", fontSize: "0.875rem" }}>Grade Level</label>
@@ -453,10 +505,14 @@ export default function AdminHome() {
             <label style={{ fontWeight: "600", fontSize: "0.875rem" }}>Section Name</label>
             <input className="auth-input" type="text" name="section" placeholder="e.g. Apollo" value={roomForm.section} onChange={handleRoomChange} required />
 
-            <label style={{ fontWeight: "600", fontSize: "0.875rem" }}>Assign Adviser (Unassigned Teachers Only)</label>
+            <label style={{ fontWeight: "600", fontSize: "0.875rem" }}>Assign Adviser (Required — Unassigned Teachers Only)</label>
             <select className="auth-input" name="assignedTeacherId" value={roomForm.assignedTeacherId} onChange={handleRoomChange}>
-              <option value="">-- Leave Unassigned --</option>
-              {getUnassignedTeachers().map((t) => (
+              <option value="" disabled>
+                {unassignedTeachers.length === 0
+                  ? "-- No available teachers (Create a teacher account first) --"
+                  : "-- Select an Adviser --"}
+              </option>
+              {unassignedTeachers.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.lastName}, {t.firstName} {t.middleInitial ? t.middleInitial + "." : ""}
                 </option>
@@ -490,7 +546,9 @@ export default function AdminHome() {
                       <td>
                         {editingRoomId === room.id ? (
                           <select className="auth-input" value={editTeacherId} onChange={(e) => setEditTeacherId(e.target.value)}>
-                            <option value="">-- Unassigned --</option>
+                            {!editTeacherId && (
+                              <option value="" disabled>-- Select an Adviser --</option>
+                            )}
                             {getUnassignedTeachers(room.assignedTeacherId).map((t) => (
                               <option key={t.id} value={t.id}>
                                 {t.lastName}, {t.firstName}
@@ -512,7 +570,7 @@ export default function AdminHome() {
                         ) : (
                           <div style={{ display: "flex", gap: "5px" }}>
                             <button className="btn-outline" style={{ color: "#1877f2", borderColor: "#1877f2", padding: "4px 8px", fontSize: "0.75rem" }} onClick={() => handleEditRoom(room)}>Edit</button>
-                            <button className="btn-outline" style={{ color: "#dc2626", borderColor: "#dc2626", padding: "4px 8px", fontSize: "0.75rem" }} onClick={() => handleDeleteRoom(room.id, room.name)}>Delete</button>
+                            <button className="btn-outline" style={{ color: "#dc2626", borderColor: "#dc2626", padding: "4px 8px", fontSize: "0.75rem" }} onClick={() => handleDeleteRoom(room.id, room)}>Delete</button>
                           </div>
                         )}
                       </td>
