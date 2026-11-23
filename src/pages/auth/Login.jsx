@@ -22,7 +22,17 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+
+  // Bypass Forgot Password States
+  const [isResetMode, setIsResetMode] = useState(false);
+  const [verifyingEmail, setVerifyingEmail] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
   const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
   const [loading, setLoading] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState(null);
 
@@ -48,7 +58,6 @@ export default function Login() {
               setLoading(false);
             }
           } else {
-            // SECURITY FIX: Never route missing/deleted accounts to Admin
             await signOut(auth);
             setError("Account not found or has been deleted. Contact your school administrator.");
             setLoading(false);
@@ -84,6 +93,7 @@ export default function Login() {
   const handleLogin = async (e) => {
     e.preventDefault();
     setError("");
+    setSuccessMsg("");
     setLoading(true);
 
     try {
@@ -96,12 +106,119 @@ export default function Login() {
     }
   };
 
+  // Step 1 of Forgot Password: Require email first & verify it exists in DB
+  const handleForgotPasswordClick = async () => {
+    setError("");
+    setSuccessMsg("");
+
+    const cleanedEmail = email.trim();
+    if (!cleanedEmail) {
+      setError("Please enter your email address first to verify.");
+      return;
+    }
+
+    setVerifyingEmail(true);
+    try {
+      const res = await fetch("/api/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "verify", email: cleanedEmail }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Email not found in the database.");
+      }
+
+      setNewPassword("");
+      setConfirmPassword("");
+      setShowNewPassword(false);
+      setShowConfirmPassword(false);
+      setIsResetMode(true);
+    } catch (err) {
+      console.error("Verify Email Error:", err);
+      setError(err.message || "Failed to verify email.");
+    } finally {
+      setVerifyingEmail(false);
+    }
+  };
+
+  // Step 2 of Forgot Password: Save new password directly in Firebase Auth
+  const handlePasswordChange = async (e) => {
+    e.preventDefault();
+    setError("");
+    setSuccessMsg("");
+
+    if (newPassword.length < 6) {
+      setError("New password must be at least 6 characters long.");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch("/api/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "reset",
+          email: email.trim(),
+          newPassword,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to update password.");
+      }
+
+      setIsResetMode(false);
+      setPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setSuccessMsg("Password updated successfully! You can now sign in with your new password.");
+    } catch (err) {
+      console.error("Password Update Error:", err);
+      setError(err.message || "Failed to update password.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBackToLogin = () => {
+    setIsResetMode(false);
+    setError("");
+    setSuccessMsg("");
+    setNewPassword("");
+    setConfirmPassword("");
+  };
+
+  const eyeBtnStyle = {
+    position: "absolute",
+    right: "10px",
+    top: "50%",
+    transform: "translateY(-50%)",
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    padding: "4px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  };
+
   return (
     <div className="auth-wrapper">
       <div className="auth-card">
-        <h2 className="auth-title">Welcome to Smart PTA</h2>
+        <h2 className="auth-title">
+          {isResetMode ? "Change Password" : "Welcome to Smart PTA"}
+        </h2>
 
-        {deferredPrompt && (
+        {!isResetMode && deferredPrompt && (
           <div style={{ marginBottom: "1.5rem", padding: "1rem", backgroundColor: "#eff6ff", borderRadius: "8px", border: "1px solid #bfdbfe", textAlign: "center" }}>
             <p style={{ margin: "0 0 10px 0", fontSize: "0.875rem", color: "#1e3a8a", fontWeight: "600" }}>
               For the best experience, install our native app:
@@ -117,57 +234,142 @@ export default function Login() {
         )}
 
         {error && (
-          <div style={{ color: "#dc2626", marginBottom: "1rem", textAlign: "center", fontWeight: "500", fontSize: "0.9rem", wordWrap: "break-word" }}>
+          <div style={{ color: "#dc2626", backgroundColor: "#fef2f2", border: "1px solid #fecaca", borderRadius: "6px", padding: "10px", marginBottom: "1rem", textAlign: "center", fontWeight: "500", fontSize: "0.875rem", wordWrap: "break-word" }}>
             {error}
           </div>
         )}
 
-        <form className="auth-form" onSubmit={handleLogin}>
-          <input
-            type="email"
-            placeholder="Email Address"
-            className="auth-input"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
+        {successMsg && (
+          <div style={{ color: "#065f46", backgroundColor: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: "6px", padding: "10px", marginBottom: "1rem", textAlign: "center", fontWeight: "500", fontSize: "0.875rem", wordWrap: "break-word" }}>
+            {successMsg}
+          </div>
+        )}
 
-          <div style={{ position: "relative", width: "100%" }}>
+        {!isResetMode ? (
+          <form className="auth-form" onSubmit={handleLogin}>
             <input
-              type={showPassword ? "text" : "password"}
-              placeholder="Password"
+              type="email"
+              placeholder="Email Address"
               className="auth-input"
-              style={{ width: "100%", paddingRight: "42px", boxSizing: "border-box" }}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               required
             />
+
+            <div style={{ position: "relative", width: "100%" }}>
+              <input
+                type={showPassword ? "text" : "password"}
+                placeholder="Password"
+                className="auth-input"
+                style={{ width: "100%", paddingRight: "42px", boxSizing: "border-box" }}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((prev) => !prev)}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                style={eyeBtnStyle}
+              >
+                {showPassword ? <EyeOpenIcon /> : <EyeClosedIcon />}
+              </button>
+            </div>
+
+            <div style={{ textAlign: "right", marginTop: "-6px", marginBottom: "6px" }}>
+              <button
+                type="button"
+                onClick={handleForgotPasswordClick}
+                disabled={verifyingEmail || loading}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#1877f2",
+                  fontSize: "0.85rem",
+                  fontWeight: "600",
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+              >
+                {verifyingEmail ? "Verifying email..." : "Forgot Password?"}
+              </button>
+            </div>
+
+            <button type="submit" className="auth-button" disabled={loading || verifyingEmail}>
+              {loading ? "Signing In..." : "Sign In"}
+            </button>
+          </form>
+        ) : (
+          <form className="auth-form" onSubmit={handlePasswordChange}>
+            <div style={{ padding: "8px 12px", backgroundColor: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "6px", fontSize: "0.85rem", color: "#1e3a8a", marginBottom: "4px", textAlign: "center" }}>
+              Verified account: <strong>{email.trim()}</strong>
+            </div>
+
+            <div style={{ position: "relative", width: "100%" }}>
+              <input
+                type={showNewPassword ? "text" : "password"}
+                placeholder="New Password (min. 6 characters)"
+                className="auth-input"
+                style={{ width: "100%", paddingRight: "42px", boxSizing: "border-box" }}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                minLength={6}
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowNewPassword((prev) => !prev)}
+                aria-label={showNewPassword ? "Hide new password" : "Show new password"}
+                style={eyeBtnStyle}
+              >
+                {showNewPassword ? <EyeOpenIcon /> : <EyeClosedIcon />}
+              </button>
+            </div>
+
+            <div style={{ position: "relative", width: "100%" }}>
+              <input
+                type={showConfirmPassword ? "text" : "password"}
+                placeholder="Confirm New Password"
+                className="auth-input"
+                style={{ width: "100%", paddingRight: "42px", boxSizing: "border-box" }}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                minLength={6}
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirmPassword((prev) => !prev)}
+                aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+                style={eyeBtnStyle}
+              >
+                {showConfirmPassword ? <EyeOpenIcon /> : <EyeClosedIcon />}
+              </button>
+            </div>
+
+            <button type="submit" className="auth-button" disabled={loading}>
+              {loading ? "Updating Password..." : "Update Password"}
+            </button>
+
             <button
               type="button"
-              onClick={() => setShowPassword((prev) => !prev)}
-              aria-label={showPassword ? "Hide password" : "Show password"}
+              onClick={handleBackToLogin}
               style={{
-                position: "absolute",
-                right: "10px",
-                top: "50%",
-                transform: "translateY(-50%)",
+                marginTop: "8px",
                 background: "none",
                 border: "none",
+                color: "#4b5563",
+                fontSize: "0.875rem",
+                fontWeight: "600",
                 cursor: "pointer",
-                padding: "4px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
+                width: "100%",
+                textAlign: "center",
               }}
             >
-              {showPassword ? <EyeOpenIcon /> : <EyeClosedIcon />}
+              ← Back to Sign In
             </button>
-          </div>
-
-          <button type="submit" className="auth-button" disabled={loading}>
-            {loading ? "Signing In..." : "Sign In"}
-          </button>
-        </form>
+          </form>
+        )}
 
         <p style={{ marginTop: "1.5rem", textAlign: "center", fontSize: "0.875rem", color: "#6b7280" }}>
           Contact your school administrator for account credentials.
