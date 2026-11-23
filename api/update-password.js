@@ -1,7 +1,9 @@
-import admin from "firebase-admin";
+import { initializeApp, getApps, cert } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
+import { getFirestore } from "firebase-admin/firestore";
 
 function initFirebaseAdmin() {
-  if (admin.apps.length) return;
+  if (getApps().length > 0) return;
 
   const projectId = process.env.FIREBASE_PROJECT_ID?.replace(/^"|"$/g, "").trim();
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.replace(/^"|"$/g, "").trim();
@@ -19,8 +21,8 @@ function initFirebaseAdmin() {
     .replace(/^"|"$/g, "")
     .replace(/\\n/g, "\n");
 
-  admin.initializeApp({
-    credential: admin.credential.cert({
+  initializeApp({
+    credential: cert({
       projectId,
       clientEmail,
       privateKey,
@@ -36,6 +38,9 @@ export default async function handler(req, res) {
   try {
     initFirebaseAdmin();
 
+    const adminAuth = getAuth();
+    const db = getFirestore();
+
     const authHeader = req.headers.authorization || "";
     const idToken = authHeader.startsWith("Bearer ") ? authHeader.split("Bearer ")[1] : null;
 
@@ -43,8 +48,8 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: "Unauthorized: Missing token." });
     }
 
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
-    const adminDoc = await admin.firestore().collection("users").doc(decodedToken.uid).get();
+    const decodedToken = await adminAuth.verifyIdToken(idToken);
+    const adminDoc = await db.collection("users").doc(decodedToken.uid).get();
 
     if (!adminDoc.exists || adminDoc.data().role !== "admin") {
       return res.status(403).json({ error: "Forbidden: Admin access required." });
@@ -60,7 +65,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Password must be at least 6 characters long." });
     }
 
-    await admin.auth().updateUser(uid, { password: newPassword });
+    await adminAuth.updateUser(uid, { password: newPassword });
 
     return res.status(200).json({ success: true, message: "Password updated in Firebase Auth." });
   } catch (error) {

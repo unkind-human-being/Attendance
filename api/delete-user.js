@@ -1,7 +1,9 @@
-import admin from "firebase-admin";
+import { initializeApp, getApps, cert } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
+import { getFirestore } from "firebase-admin/firestore";
 
 function initFirebaseAdmin() {
-  if (admin.apps.length) return;
+  if (getApps().length > 0) return;
 
   const projectId = process.env.FIREBASE_PROJECT_ID?.replace(/^"|"$/g, "").trim();
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.replace(/^"|"$/g, "").trim();
@@ -13,15 +15,14 @@ function initFirebaseAdmin() {
     );
   }
 
-  // Strip accidental surrounding quotes/trailing comma from JSON copy-paste and fix newlines
   const privateKey = rawPrivateKey
     .trim()
     .replace(/,$/, "")
     .replace(/^"|"$/g, "")
     .replace(/\\n/g, "\n");
 
-  admin.initializeApp({
-    credential: admin.credential.cert({
+  initializeApp({
+    credential: cert({
       projectId,
       clientEmail,
       privateKey,
@@ -37,6 +38,9 @@ export default async function handler(req, res) {
   try {
     initFirebaseAdmin();
 
+    const adminAuth = getAuth();
+    const db = getFirestore();
+
     // 1. Verify the requester is a logged-in Admin
     const authHeader = req.headers.authorization || "";
     const idToken = authHeader.startsWith("Bearer ") ? authHeader.split("Bearer ")[1] : null;
@@ -45,8 +49,8 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: "Unauthorized: Missing token." });
     }
 
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
-    const adminDoc = await admin.firestore().collection("users").doc(decodedToken.uid).get();
+    const decodedToken = await adminAuth.verifyIdToken(idToken);
+    const adminDoc = await db.collection("users").doc(decodedToken.uid).get();
 
     if (!adminDoc.exists || adminDoc.data().role !== "admin") {
       return res.status(403).json({ error: "Forbidden: Admin access required." });
@@ -62,7 +66,6 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "You cannot delete your own active admin account." });
     }
 
-    const db = admin.firestore();
     const userRef = db.collection("users").doc(uid);
     const userSnap = await userRef.get();
 
@@ -92,7 +95,7 @@ export default async function handler(req, res) {
 
     // 4. Permanently delete from Firebase Authentication
     try {
-      await admin.auth().deleteUser(uid);
+      await adminAuth.deleteUser(uid);
     } catch (authErr) {
       if (authErr.code !== "auth/user-not-found") {
         throw authErr;
