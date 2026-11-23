@@ -326,10 +326,12 @@ export default function AdminHome() {
 
   const handleEditRoom = (room) => {
     setEditingRoomId(room.id);
-    setEditTeacherId(room.assignedTeacherId || "");
+    // Only pre-select if that teacher still exists in users
+    const teacherStillExists = users.some((u) => u.id === room.assignedTeacherId);
+    setEditTeacherId(teacherStillExists ? room.assignedTeacherId : "");
   };
 
-  // --- EDIT ROOM (NO UNASSIGN ALLOWED) ---
+  // --- EDIT ROOM (NO UNASSIGN ALLOWED, SAFE IF OLD TEACHER WAS DELETED) ---
   const handleSaveRoomEdit = async (room) => {
     if (!editTeacherId) {
       showMessage("A room must have an assigned adviser.", "error");
@@ -358,8 +360,13 @@ export default function AdminHome() {
       });
 
       if (room.assignedTeacherId && room.assignedTeacherId !== editTeacherId) {
-        await updateDoc(doc(db, "users", room.assignedTeacherId), { assignedRoom: "" });
+        try {
+          await updateDoc(doc(db, "users", room.assignedTeacherId), { assignedRoom: "" });
+        } catch (err) {
+          console.warn("Previous adviser document no longer exists, skipping cleanup:", err);
+        }
       }
+
       await updateDoc(doc(db, "users", editTeacherId), { assignedRoom: fullRoomName });
 
       showMessage("Room updated successfully!");
@@ -367,33 +374,37 @@ export default function AdminHome() {
       fetchRooms();
       fetchUsers();
     } catch (error) {
-      showMessage("Failed to update room.", "error");
+      showMessage(error.message || "Failed to update room.", "error");
     }
   };
 
-  // --- COMPLETE DELETE ROOM (FREES TEACHER + CLEARS LINKED PARENTS & STUDENTS) ---
+  // --- COMPLETE DELETE ROOM (SAFE EVEN IF ADVISER WAS ALREADY DELETED) ---
   const handleDeleteRoom = async (roomId, room) => {
     const fullRoomName = `Grade ${room.grade} - ${room.name}`;
     if (window.confirm(`Are you sure you want to delete ${fullRoomName}?`)) {
       try {
-        // 1. Free the assigned teacher
+        // 1. Free the assigned teacher if their document still exists
         if (room.assignedTeacherId) {
-          await updateDoc(doc(db, "users", room.assignedTeacherId), { assignedRoom: "" });
+          try {
+            await updateDoc(doc(db, "users", room.assignedTeacherId), { assignedRoom: "" });
+          } catch (err) {
+            console.warn("Assigned teacher document already deleted, continuing room deletion:", err);
+          }
         }
 
         // 2. Clear assignedRoom on any users (parents/teachers) referencing this room
         const usersInRoomQuery = query(collection(db, "users"), where("assignedRoom", "==", fullRoomName));
         const usersInRoomSnap = await getDocs(usersInRoomQuery);
-        for (const userDoc of usersInRoomSnap.docs) {
-          await updateDoc(doc(db, "users", userDoc.id), { assignedRoom: "" });
-        }
+        await Promise.all(
+          usersInRoomSnap.docs.map((userDoc) => updateDoc(doc(db, "users", userDoc.id), { assignedRoom: "" }))
+        );
 
         // 3. Clear room on any students referencing this room
         const studentsInRoomQuery = query(collection(db, "students"), where("room", "==", fullRoomName));
         const studentsInRoomSnap = await getDocs(studentsInRoomQuery);
-        for (const studentDoc of studentsInRoomSnap.docs) {
-          await updateDoc(doc(db, "students", studentDoc.id), { room: "" });
-        }
+        await Promise.all(
+          studentsInRoomSnap.docs.map((studentDoc) => updateDoc(doc(db, "students", studentDoc.id), { room: "" }))
+        );
 
         // 4. Delete the room document
         await deleteDoc(doc(db, "rooms", roomId));
@@ -402,7 +413,7 @@ export default function AdminHome() {
         fetchUsers();
       } catch (error) {
         console.error("Delete Room Error:", error);
-        showMessage("Failed to delete room.", "error");
+        showMessage(error.message || "Failed to delete room.", "error");
       }
     }
   };
